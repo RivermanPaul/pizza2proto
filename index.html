@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>Pizza vs Skeletons 2</title>
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: radial-gradient(circle at top, #1a1630, #08060f 60%);
+      color: #f4f4fb;
+      font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+      overflow: hidden;
+      touch-action: none;
+    }
+    #game-layout {
+      width: 100%;
+      max-width: 960px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      padding: 24px 16px 48px;
+      box-sizing: border-box;
+    }
+    #game-stage {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+    canvas {
+      display: block;
+      width: 512px;
+      max-width: 100%;
+      height: auto;
+      border-radius: 12px;
+      background: #0b0b17;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+      image-rendering: pixelated;
+    }
+    #info {
+      text-align: center;
+      font-size: 14px;
+      color: #b0aee0;
+    }
+    #info kbd {
+      font-family: monospace;
+      font-size: 12px;
+      border: 1px solid #4a467f;
+      border-radius: 4px;
+      padding: 2px 6px;
+      background: #1d1c35;
+      color: #fff;
+    }
+    #touch-controls {
+      display: flex;
+      justify-content: center;
+      gap: 18px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+      user-select: none;
+      touch-action: manipulation;
+    }
+    #touch-controls button {
+      width: 70px;
+      height: 70px;
+      border-radius: 18px;
+      border: 2px solid #42405f;
+      background: #1e1b34;
+      color: #f4f4fb;
+      font-size: 18px;
+      font-weight: 600;
+      text-transform: uppercase;
+      box-shadow: inset 0 3px 0 rgba(255, 255, 255, 0.12);
+      transition: transform 0.1s ease, background 0.1s ease;
+    }
+    #touch-controls button:active,
+    #touch-controls button.active {
+      transform: translateY(2px);
+      background: #2f2951;
+    }
+    @media (max-width: 640px) {
+      #game-layout {
+        padding-bottom: 16px;
+      }
+      canvas {
+        width: 100%;
+      }
+      #touch-controls button {
+        width: 60px;
+        height: 60px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="game-layout">
+    <div id="game-stage">
+      <canvas id="game" width="512" height="288"></canvas>
+      <div id="info">
+        Pizza vs Skeletons 2 — Controls:
+        <kbd>A</kbd> roll left,
+        <kbd>K</kbd> jump,
+        <kbd>D</kbd> roll right
+      </div>
+    </div>
+    <div id="touch-controls">
+      <button data-input="left" aria-label="Move Left">◀</button>
+      <button data-input="jump" aria-label="Jump">⬆</button>
+      <button data-input="right" aria-label="Move Right">▶</button>
+    </div>
+  </div>
+
+  <script>
+    // Short utility that loads audio clips and provides a play helper.
+    function createSound(src, volume = 1) {
+      const audio = new Audio(src);
+      audio.preload = 'auto';
+      audio.volume = volume;
+      return { src, volume, audio };
+    }
+
+    const soundEffects = {
+      jump: createSound('audio/jump.wav', 0.45),
+      hurt: createSound('audio/hurt.wav', 0.6),
+      enemy: createSound('audio/enemy_defeat.wav', 0.5),
+      coin: createSound('audio/coin.wav', 0.45)
+    };
+
+    let audioUnlocked = false;
+    function unlockAudio() {
+      if (audioUnlocked) return;
+      audioUnlocked = true;
+      Object.values(soundEffects).forEach((sound) => {
+        const base = sound.audio;
+        base.muted = true;
+        base.currentTime = 0;
+        const playPromise = base.play();
+        if (playPromise && typeof playPromise.then === 'function') {
+          playPromise.then(() => {
+            base.pause();
+            base.currentTime = 0;
+            base.muted = false;
+          }).catch(() => {});
+        } else {
+          base.pause();
+          base.currentTime = 0;
+          base.muted = false;
+        }
+      });
+      window.removeEventListener('pointerdown', unlockAudio);
+      window.removeEventListener('keydown', unlockAudio);
+    }
+
+    window.addEventListener('pointerdown', unlockAudio);
+    window.addEventListener('keydown', unlockAudio);
+
+    function playSound(key) {
+      const sound = soundEffects[key];
+      if (!sound) return;
+      const instance = sound.audio.cloneNode();
+      instance.volume = sound.volume;
+      const playPromise = instance.play();
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(() => {});
+      }
+    }
+
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+
+    const keys = {
+      left: false,
+      right: false,
+      jump: false
+    };
+    let jumpQueued = false;
+
+    function setKeyState(key, pressed) {
+      if (key === 'left') keys.left = pressed;
+      if (key === 'right') keys.right = pressed;
+      if (key === 'jump') {
+        keys.jump = pressed;
+        if (pressed) {
+          jumpQueued = true;
+        }
+      }
+    }
+
+    const keyboardMap = {
+      ArrowLeft: 'left',
+      KeyA: 'left',
+      ArrowRight: 'right',
+      KeyD: 'right',
+      ArrowUp: 'jump',
+      KeyK: 'jump',
+      Space: 'jump',
+      KeyW: 'jump'
+    };
+
+    window.addEventListener('keydown', (event) => {
+      const mapped = keyboardMap[event.code];
+      if (!mapped) return;
+      event.preventDefault();
+      setKeyState(mapped, true);
+    });
+
+    window.addEventListener('keyup', (event) => {
+      const mapped = keyboardMap[event.code];
+      if (!mapped) return;
+      event.preventDefault();
+      setKeyState(mapped, false);
+    });
+
+    // Wire up on-screen buttons so mobile players can roll and jump.
+    const touchButtons = document.querySelectorAll('#touch-controls button');
+    touchButtons.forEach((button) => {
+      const input = button.dataset.input;
+      const press = (event) => {
+        event.preventDefault();
+        button.classList.add('active');
+        setKeyState(input, true);
+      };
+      const release = (event) => {
+        event.preventDefault();
+        button.classList.remove('active');
+        setKeyState(input, false);
+      };
+      button.addEventListener('pointerdown', press);
+      button.addEventListener('pointerup', release);
+      button.addEventListener('pointerleave', release);
+      button.addEventListener('pointercancel', release);
+    });
+
+    const pizza = {
+      x: 140,
+      y: 80,
+      radius: 32,
+      vx: 0,
+      vy: 0,
+      angle: 0,
+      angVel: 0,
+      grounded: false,
+      health: 3,
+      score: 0,
+      invincibleTimer: 0
+    };
+
+    const world = {
+      gravity: 2600,
+      rollForce: 1100,
+      airDrag: 0.06,
+      groundDrag: 6,
+      jumpImpulse: 980,
+      maxSpeed: 460,
+      width: 2600,
+      floorY: canvas.height - 50
+    };
+
+    const camera = {
+      x: 0
+    };
+
+    const platforms = [
+      { x: -200, y: world.floorY, width: world.width + 400, height: 200 },
+      { x: 160, y: world.floorY - 110, width: 200, height: 24 },
+      { x: 520, y: world.floorY - 190, width: 180, height: 20 },
+      { x: 840, y: world.floorY - 140, width: 170, height: 20 },
+      { x: 1180, y: world.floorY - 80, width: 260, height: 20 },
+      { x: 1520, y: world.floorY - 170, width: 200, height: 20 },
+      { x: 1860, y: world.floorY - 110, width: 220, height: 24 },
+      { x: 2200, y: world.floorY - 200, width: 200, height: 20 }
+    ];
+
+    function createSkeleton(x, y, minX, maxX) {
+      return {
+        x,
+        y,
+        width: 46,
+        height: 76,
+        dir: 1,
+        speed: 60,
+        minX,
+        maxX,
+        alive: true,
+        hitTimer: 0
+      };
+    }
+
+    const skeletons = [
+      createSkeleton(360, world.floorY - 76, 320, 480),
+      createSkeleton(960, world.floorY - 76, 900, 1100),
+      createSkeleton(1920, world.floorY - 76, 1880, 2100)
+    ];
+
+    const particles = [];
+
+    function spawnParticle(x, y, color) {
+      particles.push({
+        x,
+        y,
+        vx: (Math.random() - 0.5) * 180,
+        vy: -Math.random() * 220,
+        life: 0.4 + Math.random() * 0.4,
+        color
+      });
+    }
+
+    function circleRectOverlap(circle, rect) {
+      const closestX = Math.max(rect.x, Math.min(circle.x, rect.x + rect.width));
+      const closestY = Math.max(rect.y, Math.min(circle.y, rect.y + rect.height));
+      const dx = circle.x - closestX;
+      const dy = circle.y - closestY;
+      const distanceSq = dx * dx + dy * dy;
+      return distanceSq < circle.radius * circle.radius;
+    }
+
+    function resolveCircleRect(circle, rect) {
+      const closestX = Math.max(rect.x, Math.min(circle.x, rect.x + rect.width));
+      const closestY = Math.max(rect.y, Math.min(circle.y, rect.y + rect.height));
+      let dx = circle.x - closestX;
+      let dy = circle.y - closestY;
+      let distance = Math.hypot(dx, dy);
+
+      if (distance === 0) {
+        dx = 0;
+        dy = -1;
+        distance = 1;
+      }
+
+      if (distance < circle.radius) {
+        const penetration = circle.radius - distance;
+        const nx = dx / distance;
+        const ny = dy / distance;
+        circle.x += nx * penetration;
+        circle.y += ny * penetration;
+
+        const velAlongNormal = circle.vx * nx + circle.vy * ny;
+        if (velAlongNormal < 0) {
+          circle.vx -= velAlongNormal * nx;
+          circle.vy -= velAlongNormal * ny;
+        }
+
+        if (ny < -0.4) {
+          circle.grounded = true;
+        }
+      }
+    }
+
+    function updateSkeletons(dt) {
+      for (const skeleton of skeletons) {
+        if (!skeleton.alive) {
+          skeleton.hitTimer -= dt;
+          continue;
+        }
+        skeleton.x += skeleton.dir * skeleton.speed * dt;
+        if (skeleton.x < skeleton.minX) {
+          skeleton.x = skeleton.minX;
+          skeleton.dir = 1;
+        } else if (skeleton.x + skeleton.width > skeleton.maxX) {
+          skeleton.x = skeleton.maxX - skeleton.width;
+          skeleton.dir = -1;
+        }
+
+        if (circleRectOverlap(pizza, skeleton)) {
+          const hittingFromAbove = pizza.vy > 80 && pizza.y < skeleton.y;
+          if (hittingFromAbove && pizza.invincibleTimer <= 0) {
+            skeleton.alive = false;
+            skeleton.hitTimer = 0.6;
+            pizza.vy = -world.jumpImpulse * 0.7;
+            pizza.angVel += 4 * Math.sign(pizza.vx || 1);
+            pizza.score += 100;
+            playSound('enemy');
+            for (let i = 0; i < 12; i++) {
+              spawnParticle(
+                skeleton.x + skeleton.width / 2,
+                skeleton.y + skeleton.height / 2,
+                i % 2 ? '#fbe7c4' : '#dcb48f'
+              );
+            }
+          } else if (pizza.invincibleTimer <= 0) {
+            pizza.health -= 1;
+            pizza.invincibleTimer = 1.2;
+            pizza.vy = -world.jumpImpulse * 0.5;
+            pizza.vx += Math.sign(pizza.x - (skeleton.x + skeleton.width / 2)) * 320;
+            pizza.angVel += Math.sign(pizza.vx) * 6;
+            playSound('hurt');
+            if (pizza.health <= 0) {
+              resetGame();
+            }
+          }
+        }
+      }
+    }
+
+    function resetGame() {
+      pizza.x = 140;
+      pizza.y = 80;
+      pizza.vx = 0;
+      pizza.vy = 0;
+      pizza.angle = 0;
+      pizza.angVel = 0;
+      pizza.score = 0;
+      pizza.health = 3;
+      pizza.invincibleTimer = 0;
+      skeletons.forEach((skeleton, index) => {
+        skeleton.alive = true;
+        skeleton.hitTimer = 0;
+        skeleton.x = [360, 960, 1920][index] || skeleton.x;
+      });
+    }
+
+    function updateParticles(dt) {
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.life -= dt;
+        if (p.life <= 0) {
+          particles.splice(i, 1);
+          continue;
+        }
+        p.vy += world.gravity * 0.7 * dt;
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+      }
+    }
+
+    function updatePizza(dt) {
+      pizza.grounded = false;
+      pizza.invincibleTimer = Math.max(0, pizza.invincibleTimer - dt);
+
+      const rollDir = (keys.left ? -1 : 0) + (keys.right ? 1 : 0);
+      if (rollDir !== 0) {
+        pizza.vx += rollDir * world.rollForce * dt;
+        pizza.angVel += rollDir * 6 * dt;
+      }
+
+      if (Math.abs(pizza.vx) > world.maxSpeed) {
+        pizza.vx = world.maxSpeed * Math.sign(pizza.vx);
+      }
+
+      pizza.vy += world.gravity * dt;
+      pizza.vx *= 1 - world.airDrag * dt;
+
+      pizza.x += pizza.vx * dt;
+      pizza.y += pizza.vy * dt;
+      pizza.angle += pizza.angVel * dt;
+      pizza.angVel *= 0.98;
+
+      for (const platform of platforms) {
+        resolveCircleRect(pizza, platform);
+      }
+
+      pizza.x = Math.max(pizza.radius, Math.min(world.width - pizza.radius, pizza.x));
+      pizza.y = Math.min(pizza.y, world.floorY - pizza.radius);
+
+      if (pizza.grounded) {
+        pizza.vy = Math.min(pizza.vy, 0);
+        const dragFactor = Math.pow(1 - Math.min(world.groundDrag * dt, 0.9), dt > 0.016 ? 1.5 : 1);
+        pizza.vx *= dragFactor;
+      }
+
+      if (jumpQueued && pizza.grounded) {
+        pizza.vy = -world.jumpImpulse;
+        pizza.grounded = false;
+        pizza.angVel += (keys.right ? 1 : keys.left ? -1 : 0) * 3;
+        jumpQueued = false;
+        playSound('jump');
+      } else if (jumpQueued && !pizza.grounded) {
+        jumpQueued = false;
+      }
+    }
+
+    function updateCamera() {
+      const target = pizza.x - canvas.width * 0.5;
+      const clampMax = world.width - canvas.width;
+      const desired = Math.max(0, Math.min(clampMax, target));
+      camera.x += (desired - camera.x) * 0.12;
+    }
+
+    function drawBackground() {
+      const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+      gradient.addColorStop(0, '#130f24');
+      gradient.addColorStop(1, '#06040c');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = '#1b172f';
+      for (let i = 0; i < 20; i++) {
+        const hillX = ((i * 220) - camera.x * 0.25) % (canvas.width + 220) - 220;
+        const hillY = canvas.height - 30;
+        ctx.beginPath();
+        ctx.ellipse(hillX, hillY, 160, 40, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+      ctx.lineWidth = 1;
+      for (let i = 0; i < 120; i++) {
+        const starX = (i * 120 + i * 37) % (canvas.width + 500) - (camera.x * 0.08 % 500);
+        const starY = (i * 53) % 200;
+        ctx.beginPath();
+        ctx.moveTo(starX, starY);
+        ctx.lineTo(starX + 1, starY + 1);
+        ctx.stroke();
+      }
+    }
+
+    function drawPlatforms() {
+      ctx.fillStyle = '#2c2b45';
+      ctx.strokeStyle = '#5c537f';
+      ctx.lineWidth = 2;
+      for (const platform of platforms) {
+        const x = platform.x - camera.x;
+        ctx.fillRect(x, platform.y, platform.width, platform.height);
+        ctx.strokeRect(x, platform.y, platform.width, platform.height);
+      }
+    }
+
+    function drawSkeletons() {
+      for (const skeleton of skeletons) {
+        const x = skeleton.x - camera.x;
+        if (skeleton.alive) {
+          ctx.fillStyle = '#d9d6e6';
+          ctx.fillRect(x, skeleton.y, skeleton.width, skeleton.height);
+          ctx.fillStyle = '#948daa';
+          ctx.fillRect(x + 6, skeleton.y + 6, skeleton.width - 12, skeleton.height - 12);
+          ctx.fillStyle = '#1f1c33';
+          const eyeY = skeleton.y + 18;
+          ctx.fillRect(x + 12, eyeY, 6, 6);
+          ctx.fillRect(x + skeleton.width - 18, eyeY, 6, 6);
+        } else if (skeleton.hitTimer > 0) {
+          ctx.fillStyle = 'rgba(255,255,255,0.15)';
+          ctx.fillRect(x, skeleton.y, skeleton.width, skeleton.height);
+        }
+      }
+    }
+
+    function drawPizza() {
+      const renderX = pizza.x - camera.x;
+      ctx.save();
+      ctx.translate(renderX, pizza.y);
+      ctx.rotate(pizza.angle);
+      ctx.fillStyle = '#ffb347';
+      ctx.beginPath();
+      ctx.arc(0, 0, pizza.radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#d65a31';
+      for (let i = 0; i < 12; i++) {
+        const angle = (Math.PI * 2 / 12) * i;
+        const dotX = Math.cos(angle) * pizza.radius * 0.6;
+        const dotY = Math.sin(angle) * pizza.radius * 0.6;
+        ctx.beginPath();
+        ctx.arc(dotX, dotY, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.strokeStyle = '#f7d08e';
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.arc(0, 0, pizza.radius - 6, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawParticles() {
+      for (const p of particles) {
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = Math.max(0, p.life / 0.8);
+        ctx.fillRect(p.x - camera.x, p.y, 4, 4);
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    function drawHUD() {
+      ctx.save();
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.fillRect(10, 10, 140, 60);
+      ctx.fillStyle = '#ff4d6d';
+      for (let i = 0; i < pizza.health; i++) {
+        ctx.fillRect(20 + i * 24, 20, 18, 18);
+      }
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '14px monospace';
+      ctx.fillText(`Score: ${pizza.score.toString().padStart(3, '0')}`, 20, 52);
+      ctx.restore();
+    }
+
+    let lastTime = 0;
+    function loop(timestamp) {
+      if (!lastTime) lastTime = timestamp;
+      const dt = Math.min(0.033, (timestamp - lastTime) / 1000);
+      lastTime = timestamp;
+
+      updatePizza(dt);
+      updateSkeletons(dt);
+      updateParticles(dt);
+      updateCamera();
+
+      drawBackground();
+      drawPlatforms();
+      drawSkeletons();
+      drawPizza();
+      drawParticles();
+      drawHUD();
+
+      requestAnimationFrame(loop);
+    }
+
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
