@@ -124,6 +124,7 @@
     </div>
   </div>
 
+  <script src="https://unpkg.com/matter-js@0.20.0/build/matter.min.js"></script>
   <script>
     // Short utility that loads audio clips and provides a play helper.
     function createSound(src, volume = 1) {
@@ -181,6 +182,8 @@
 
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
+
+    const { Engine, Bodies, Body, Composite, Events } = Matter;
 
     const keys = {
       left: false,
@@ -259,13 +262,15 @@
       invincibleTimer: 0
     };
 
+    const physicsSettings = {
+      rollForce: 0.0027,
+      jumpSpeed: 16.5,
+      maxSpeed: 11.2,
+      gravity: 1.7
+    };
+
     const world = {
       gravity: 2600,
-      rollForce: 1100,
-      airDrag: 0.06,
-      groundDrag: 6,
-      jumpImpulse: 980,
-      maxSpeed: 460,
       width: 2600,
       floorY: canvas.height - 50
     };
@@ -284,6 +289,89 @@
       { x: 1860, y: world.floorY - 110, width: 220, height: 24 },
       { x: 2200, y: world.floorY - 200, width: 200, height: 20 }
     ];
+
+    const engine = Engine.create({ enableSleeping: false });
+    engine.gravity.y = physicsSettings.gravity;
+    engine.gravity.scale = 0.01;
+    const physicsWorld = engine.world;
+
+    const platformBodies = platforms.map((platform) => {
+      const body = Bodies.rectangle(
+        platform.x + platform.width / 2,
+        platform.y + platform.height / 2,
+        platform.width,
+        platform.height,
+        { isStatic: true, friction: 0.9, restitution: 0 }
+      );
+      Composite.add(physicsWorld, body);
+      return { ...platform, body };
+    });
+
+    const boundaryThickness = 400;
+    const leftWall = Bodies.rectangle(-boundaryThickness / 2, world.floorY, boundaryThickness, 4000, {
+      isStatic: true
+    });
+    const rightWall = Bodies.rectangle(
+      world.width + boundaryThickness / 2,
+      world.floorY,
+      boundaryThickness,
+      4000,
+      { isStatic: true }
+    );
+    Composite.add(physicsWorld, [leftWall, rightWall]);
+
+    const pizzaCore = Bodies.circle(pizza.x, pizza.y, pizza.radius, {
+      restitution: 0.05,
+      friction: 0.12,
+      frictionAir: 0.02,
+      density: 0.004
+    });
+    const pizzaFoot = Bodies.rectangle(pizza.x, pizza.y + pizza.radius - 4, pizza.radius * 0.9, 6, {
+      isSensor: true,
+      label: 'pizzaFoot'
+    });
+    const pizzaBody = Body.create({
+      label: 'pizza',
+      parts: [pizzaCore, pizzaFoot],
+      friction: 0.12,
+      frictionStatic: 0.9,
+      frictionAir: 0.02
+    });
+    Composite.add(physicsWorld, pizzaBody);
+
+    const groundedContacts = new Set();
+    const trackGrounding = (pairs) => {
+      for (const pair of pairs) {
+        if (!pair.isActive) continue;
+        if (pair.bodyA === pizzaFoot || pair.bodyB === pizzaFoot) {
+          const other = pair.bodyA === pizzaFoot ? pair.bodyB : pair.bodyA;
+          if (!other.isSensor) {
+            groundedContacts.add(other.id);
+            pizza.grounded = true;
+          }
+        }
+      }
+    };
+
+    Events.on(engine, 'collisionStart', (event) => {
+      trackGrounding(event.pairs);
+    });
+
+    Events.on(engine, 'collisionActive', (event) => {
+      groundedContacts.clear();
+      trackGrounding(event.pairs);
+      pizza.grounded = groundedContacts.size > 0;
+    });
+
+    Events.on(engine, 'collisionEnd', (event) => {
+      for (const pair of event.pairs) {
+        if (pair.bodyA === pizzaFoot || pair.bodyB === pizzaFoot) {
+          const other = pair.bodyA === pizzaFoot ? pair.bodyB : pair.bodyA;
+          groundedContacts.delete(other.id);
+        }
+      }
+      pizza.grounded = groundedContacts.size > 0;
+    });
 
     function createSkeleton(x, y, minX, maxX) {
       return {
@@ -328,38 +416,6 @@
       return distanceSq < circle.radius * circle.radius;
     }
 
-    function resolveCircleRect(circle, rect) {
-      const closestX = Math.max(rect.x, Math.min(circle.x, rect.x + rect.width));
-      const closestY = Math.max(rect.y, Math.min(circle.y, rect.y + rect.height));
-      let dx = circle.x - closestX;
-      let dy = circle.y - closestY;
-      let distance = Math.hypot(dx, dy);
-
-      if (distance === 0) {
-        dx = 0;
-        dy = -1;
-        distance = 1;
-      }
-
-      if (distance < circle.radius) {
-        const penetration = circle.radius - distance;
-        const nx = dx / distance;
-        const ny = dy / distance;
-        circle.x += nx * penetration;
-        circle.y += ny * penetration;
-
-        const velAlongNormal = circle.vx * nx + circle.vy * ny;
-        if (velAlongNormal < 0) {
-          circle.vx -= velAlongNormal * nx;
-          circle.vy -= velAlongNormal * ny;
-        }
-
-        if (ny < -0.4) {
-          circle.grounded = true;
-        }
-      }
-    }
-
     function updateSkeletons(dt) {
       for (const skeleton of skeletons) {
         if (!skeleton.alive) {
@@ -376,12 +432,15 @@
         }
 
         if (circleRectOverlap(pizza, skeleton)) {
-          const hittingFromAbove = pizza.vy > 80 && pizza.y < skeleton.y;
+          const hittingFromAbove = pizza.vy > 6 && pizza.y < skeleton.y;
           if (hittingFromAbove && pizza.invincibleTimer <= 0) {
             skeleton.alive = false;
             skeleton.hitTimer = 0.6;
-            pizza.vy = -world.jumpImpulse * 0.7;
-            pizza.angVel += 4 * Math.sign(pizza.vx || 1);
+            Body.setVelocity(pizzaBody, {
+              x: pizzaBody.velocity.x,
+              y: -physicsSettings.jumpSpeed * 0.7
+            });
+            Body.setAngularVelocity(pizzaBody, pizzaBody.angularVelocity + 4 * Math.sign(pizzaBody.velocity.x || 1));
             pizza.score += 100;
             playSound('enemy');
             for (let i = 0; i < 12; i++) {
@@ -394,9 +453,14 @@
           } else if (pizza.invincibleTimer <= 0) {
             pizza.health -= 1;
             pizza.invincibleTimer = 1.2;
-            pizza.vy = -world.jumpImpulse * 0.5;
-            pizza.vx += Math.sign(pizza.x - (skeleton.x + skeleton.width / 2)) * 320;
-            pizza.angVel += Math.sign(pizza.vx) * 6;
+            Body.setVelocity(pizzaBody, {
+              x: pizzaBody.velocity.x + Math.sign(pizza.x - (skeleton.x + skeleton.width / 2)) * 5,
+              y: -physicsSettings.jumpSpeed * 0.5
+            });
+            Body.setAngularVelocity(
+              pizzaBody,
+              pizzaBody.angularVelocity + Math.sign(pizzaBody.velocity.x || 1) * 6
+            );
             playSound('hurt');
             if (pizza.health <= 0) {
               resetGame();
@@ -407,12 +471,12 @@
     }
 
     function resetGame() {
-      pizza.x = 140;
-      pizza.y = 80;
-      pizza.vx = 0;
-      pizza.vy = 0;
-      pizza.angle = 0;
-      pizza.angVel = 0;
+      Body.setPosition(pizzaBody, { x: 140, y: 80 });
+      Body.setVelocity(pizzaBody, { x: 0, y: 0 });
+      Body.setAngle(pizzaBody, 0);
+      Body.setAngularVelocity(pizzaBody, 0);
+      groundedContacts.clear();
+      pizza.grounded = false;
       pizza.score = 0;
       pizza.health = 3;
       pizza.invincibleTimer = 0;
@@ -438,49 +502,42 @@
     }
 
     function updatePizza(dt) {
-      pizza.grounded = false;
       pizza.invincibleTimer = Math.max(0, pizza.invincibleTimer - dt);
 
       const rollDir = (keys.left ? -1 : 0) + (keys.right ? 1 : 0);
       if (rollDir !== 0) {
-        pizza.vx += rollDir * world.rollForce * dt;
-        pizza.angVel += rollDir * 6 * dt;
+        const rollForce = rollDir * physicsSettings.rollForce * pizzaBody.mass;
+        Body.applyForce(pizzaBody, pizzaBody.position, { x: rollForce, y: 0 });
       }
 
-      if (Math.abs(pizza.vx) > world.maxSpeed) {
-        pizza.vx = world.maxSpeed * Math.sign(pizza.vx);
-      }
-
-      pizza.vy += world.gravity * dt;
-      pizza.vx *= 1 - world.airDrag * dt;
-
-      pizza.x += pizza.vx * dt;
-      pizza.y += pizza.vy * dt;
-      pizza.angle += pizza.angVel * dt;
-      pizza.angVel *= 0.98;
-
-      for (const platform of platforms) {
-        resolveCircleRect(pizza, platform);
-      }
-
-      pizza.x = Math.max(pizza.radius, Math.min(world.width - pizza.radius, pizza.x));
-      pizza.y = Math.min(pizza.y, world.floorY - pizza.radius);
-
-      if (pizza.grounded) {
-        pizza.vy = Math.min(pizza.vy, 0);
-        const dragFactor = Math.pow(1 - Math.min(world.groundDrag * dt, 0.9), dt > 0.016 ? 1.5 : 1);
-        pizza.vx *= dragFactor;
+      const clampedSpeed = Math.max(
+        -physicsSettings.maxSpeed,
+        Math.min(physicsSettings.maxSpeed, pizzaBody.velocity.x)
+      );
+      if (clampedSpeed !== pizzaBody.velocity.x) {
+        Body.setVelocity(pizzaBody, { x: clampedSpeed, y: pizzaBody.velocity.y });
       }
 
       if (jumpQueued && pizza.grounded) {
-        pizza.vy = -world.jumpImpulse;
-        pizza.grounded = false;
-        pizza.angVel += (keys.right ? 1 : keys.left ? -1 : 0) * 3;
+        Body.setVelocity(pizzaBody, { x: pizzaBody.velocity.x, y: -physicsSettings.jumpSpeed });
+        Body.setAngularVelocity(
+          pizzaBody,
+          pizzaBody.angularVelocity + (keys.right ? 1 : keys.left ? -1 : 0) * 3
+        );
         jumpQueued = false;
         playSound('jump');
       } else if (jumpQueued && !pizza.grounded) {
         jumpQueued = false;
       }
+
+      Engine.update(engine, dt * 1000);
+
+      pizza.x = pizzaBody.position.x;
+      pizza.y = pizzaBody.position.y;
+      pizza.vx = pizzaBody.velocity.x;
+      pizza.vy = pizzaBody.velocity.y;
+      pizza.angle = pizzaBody.angle;
+      pizza.angVel = pizzaBody.angularVelocity;
     }
 
     function updateCamera() {
