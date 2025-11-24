@@ -6,7 +6,7 @@
   const nodes = [
     { id: 'start', label: 'Start', x: 80, y: 200, links: ['stage1', 'turn'] },
     { id: 'stage1', label: '1', x: 160, y: 200, links: ['start', 'stage2'] },
-    { id: 'stage2', label: '2', x: 240, y: 200, links: ['stage1', 'stage3'] },
+    { id: 'stage2', label: 'Odell Lake', x: 240, y: 200, links: ['stage1', 'stage3'] },
     { id: 'stage3', label: '3', x: 320, y: 200, links: ['stage2', 'stage4'] },
     { id: 'stage4', label: '4', x: 320, y: 280, links: ['stage3', 'bridge'] },
     { id: 'bridge', label: 'G', x: 440, y: 280, links: ['stage4', 'castleGate', 'riverTurn'] },

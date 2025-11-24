@@ -10,8 +10,13 @@
 
   // Translate a size category into a rendered radius.
   function sizeToRadius(size) {
-    // Start smaller than the platformer pizza and ramp size steadily.
-    return 8 + size * 4;
+    // Start smaller than the platformer pizza and widen each step more than the last for clearer growth.
+    const radii = [0, 12, 18, 26, 36, 48, 62];
+    // Fall back to the largest configured radius when a size falls outside the tuned set.
+    if (radii[size] === undefined) {
+      return radii[radii.length - 1];
+    }
+    return radii[size];
   }
 
   // Track all state for the player-controlled pizza swimmer.
@@ -36,7 +41,7 @@
     swimAccel: 180,
     swimBoost: 240 * 4,
     drag: 0.9,
-    sinkForce: 96,
+    sinkForce: 192,
     maxSpeed: 160
   };
 
@@ -106,7 +111,7 @@
   }
 
   // Reset the swimmer and fish after death or initial entry.
-  function resetLake() {
+  function resetLake(nextPendingAction = null) {
     swimmer.x = 256;
     swimmer.y = 160;
     swimmer.vx = 0;
@@ -117,7 +122,8 @@
     swimmer.facing = 1;
     growthProgress = 0;
     damageCooldown = 0;
-    pendingAction = null;
+    // Carry a requested action into the next update tick so callers can return to the overworld.
+    pendingAction = nextPendingAction;
     camera.x = 0;
     camera.y = 0;
     spawnFishField();
@@ -312,8 +318,8 @@
       // Resolve collisions only when the fish mouth reaches the swimmer.
       if (fishBiteDistance <= swimmer.radius + fishMouthRadius && sizeGap > 0) {
         if (sizeGap >= 2) {
-          // Instantly reset the lake when a huge fish catches you.
-          resetLake();
+          // Instantly reset the lake and request a return to the overworld when a huge fish catches you.
+          resetLake({ type: 'return-to-map' });
           return;
         }
         // Apply damage once per cooldown window for near-peer fish.
@@ -322,7 +328,8 @@
           damageCooldown = 1.1;
           playSound('hurt');
           if (swimmer.health <= 0) {
-            resetLake();
+            // Leave the lake after running out of health so the player resumes on the overworld.
+            resetLake({ type: 'return-to-map' });
             return;
           }
         }
