@@ -31,14 +31,17 @@
 
   // Configure the lake bounds and physics tuning values.
   const lake = {
-    width: 512,
-    height: 288,
+    width: 512 * 3,
+    height: 288 * 2,
     swimAccel: 180,
-    swimBoost: 240,
+    swimBoost: 240 * 4,
     drag: 0.9,
     sinkForce: 48,
     maxSpeed: 160
   };
+
+  // Camera that follows the swimmer while respecting the enlarged lake dimensions.
+  const camera = { x: 0, y: 0 };
 
   // Track growth progress when eating fish one size down.
   let growthProgress = 0;
@@ -106,7 +109,21 @@
     growthProgress = 0;
     damageCooldown = 0;
     pendingAction = null;
+    camera.x = 0;
+    camera.y = 0;
     spawnFishField();
+  }
+
+  // Center the camera on the swimmer without revealing space outside the lake.
+  function updateCameraView(viewWidth, viewHeight) {
+    // Target the swimmer's position so the player stays near the middle of the screen.
+    const targetX = swimmer.x - viewWidth * 0.5;
+    const targetY = swimmer.y - viewHeight * 0.5;
+    const maxX = Math.max(0, lake.width - viewWidth);
+    const maxY = Math.max(0, lake.height - viewHeight);
+    // Clamp the camera to the stage bounds so off-screen areas remain hidden.
+    camera.x = clamp(targetX, 0, maxX);
+    camera.y = clamp(targetY, 0, maxY);
   }
 
   // Grow the swimmer after eating enough appropriately sized fish.
@@ -243,6 +260,12 @@
 
   // Draw the underwater backdrop, fish, and HUD.
   function draw(ctx) {
+    const viewWidth = ctx.canvas.width;
+    const viewHeight = ctx.canvas.height;
+    updateCameraView(viewWidth, viewHeight);
+
+    ctx.save();
+    ctx.translate(-camera.x, -camera.y);
     const gradient = ctx.createLinearGradient(0, 0, 0, lake.height);
     gradient.addColorStop(0, '#0a1c2f');
     gradient.addColorStop(1, '#021020');
@@ -277,6 +300,7 @@
     ctx.beginPath();
     ctx.arc(swimmer.radius * 0.6, 0, swimmer.radius * 0.2, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
     ctx.restore();
 
     // Paint HUD text for size, growth, and health.
