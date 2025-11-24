@@ -56,6 +56,8 @@
 
   // Current location within the overworld graph.
   let currentNodeId = 'start';
+  // Remember the last visited node so re-entering the overworld resumes where the player left off.
+  let lastVisitedNodeId = currentNodeId;
   // Visual representation of the pizza's position, animated between nodes.
   const pizzaMarker = { x: nodeMap.get(currentNodeId).x, y: nodeMap.get(currentNodeId).y };
   // Cooldown timer to prevent multi-move per button hold.
@@ -77,13 +79,8 @@
    * Sets the overworld to its initial state each time the player enters it.
    */
   function enter(score) {
-    // When the player has picked up some score, start them further along the path to honor progress.
-    // Shift the starting node if the player has earned enough points to unlock mid-map shortcuts.
-    if (score >= 10) {
-      currentNodeId = 'stage3';
-    } else {
-      currentNodeId = 'start';
-    }
+    // Reuse the previous selection when possible so overworld entries start from the last cleared level.
+    currentNodeId = nodeMap.has(lastVisitedNodeId) ? lastVisitedNodeId : 'start';
     // Reset travel state so we snap the marker to the current node on entry.
     travelState.from = null;
     travelState.to = null;
@@ -195,6 +192,8 @@
       // Finalize the hop once the interpolation completes.
       if (travelState.t >= 1) {
         currentNodeId = travelState.to.id;
+        // Persist the player's latest position so future overworld visits resume here.
+        lastVisitedNodeId = currentNodeId;
         travelState.to = null;
         travelState.from = null;
       }
