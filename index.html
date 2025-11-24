@@ -319,7 +319,8 @@
       jumpSpeed: 10,
       maxSpeed: 4,
       gravity: 0.1,
-      maxSpin: 4
+      maxSpin: 4,
+      slamMultiplier: 3
     };
 
     const world = {
@@ -384,6 +385,8 @@
 
     const groundedContacts = new Set();
     let groundedCoyoteTimer = 0;
+    // Track how long the pizza has been physically off the ground to gate air actions.
+    let airborneTimer = 0;
     // Track pizza-ground contacts and record when grounded.
     const trackGrounding = (pairs) => {
       for (const pair of pairs) {
@@ -504,10 +507,18 @@
 
     function updatePizza(dt) {
       pizza.invincibleTimer = Math.max(0, pizza.invincibleTimer - dt);
-      groundedCoyoteTimer = groundedContacts.size > 0
+      const isPhysicallyGrounded = groundedContacts.size > 0;
+      groundedCoyoteTimer = isPhysicallyGrounded
         ? 0.16
         : Math.max(0, groundedCoyoteTimer - dt);
       pizza.grounded = groundedCoyoteTimer > 0;
+
+      // Track air time so the slam input only works after a short hang time.
+      if (isPhysicallyGrounded) {
+        airborneTimer = 0;
+      } else {
+        airborneTimer += dt;
+      }
 
       const rollDir = (keys.left ? -1 : 0) + (keys.right ? 1 : 0);
       if (rollDir !== 0) {
@@ -523,8 +534,16 @@
         Body.setVelocity(pizzaBody, { x: clampedSpeed, y: pizzaBody.velocity.y });
       }
 
+      // Trigger the normal jump when grounded, otherwise spend the queue on a slam if airborne long enough.
       if (jumpQueued && pizza.grounded) {
         Body.setVelocity(pizzaBody, { x: pizzaBody.velocity.x, y: -physicsSettings.jumpSpeed });
+        jumpQueued = false;
+        playSound('jump');
+      } else if (jumpQueued && !pizza.grounded && airborneTimer > 0.25) {
+        Body.setVelocity(pizzaBody, {
+          x: pizzaBody.velocity.x,
+          y: physicsSettings.jumpSpeed * physicsSettings.slamMultiplier
+        });
         jumpQueued = false;
         playSound('jump');
       } else if (jumpQueued && !pizza.grounded) {
