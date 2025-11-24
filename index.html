@@ -113,13 +113,17 @@
       <div id="info">
         Pizza vs Skeletons 2 — Controls:
         <kbd>A</kbd> roll left,
-        <kbd>K</kbd> jump,
-        <kbd>D</kbd> roll right
+        <kbd>K</kbd> or <kbd>Space</kbd> jump,
+        <kbd>D</kbd> roll right,
+        <kbd>W</kbd>/<kbd>↑</kbd> map up,
+        <kbd>S</kbd>/<kbd>↓</kbd> map down
       </div>
     </div>
     <div id="touch-controls">
       <button data-input="left" aria-label="Move Left">◀</button>
       <button data-input="right" aria-label="Move Right">▶</button>
+      <button data-input="up" aria-label="Move Up">▲</button>
+      <button data-input="down" aria-label="Move Down">▼</button>
       <button class="jump-button" data-input="jump" aria-label="Jump">⬆</button>
     </div>
   </div>
@@ -166,6 +170,8 @@
     const keys = {
       left: false,
       right: false,
+      up: false,
+      down: false,
       jump: false
     };
     let jumpQueued = false;
@@ -188,12 +194,32 @@
 
     // Update input map for keyboard/touch controls.
     function setKeyState(key, pressed) {
-      if (key === 'left') keys.left = pressed;
-      if (key === 'right') keys.right = pressed;
-      if (key === 'jump') {
-        keys.jump = pressed;
-        if (pressed) {
-          jumpQueued = true;
+      // Normalize the mapping so individual or multi-action bindings work the same way.
+      const actions = Array.isArray(key) ? key : [key];
+      // Update each requested action flag in the shared keys map.
+      for (const action of actions) {
+        // Reflect horizontal left presses in the keys state.
+        if (action === 'left') {
+          keys.left = pressed;
+        }
+        // Reflect horizontal right presses in the keys state.
+        if (action === 'right') {
+          keys.right = pressed;
+        }
+        // Track upward navigation presses for overworld grid travel.
+        if (action === 'up') {
+          keys.up = pressed;
+        }
+        // Track downward navigation presses for overworld grid travel.
+        if (action === 'down') {
+          keys.down = pressed;
+        }
+        // Preserve the jump flag and queue to honor in-flight platformer jumps.
+        if (action === 'jump') {
+          keys.jump = pressed;
+          if (pressed) {
+            jumpQueued = true;
+          }
         }
       }
     }
@@ -203,35 +229,46 @@
       KeyA: 'left',
       ArrowRight: 'right',
       KeyD: 'right',
-      ArrowUp: 'jump',
+      ArrowUp: ['up', 'jump'],
+      KeyW: ['up', 'jump'],
+      ArrowDown: 'down',
+      KeyS: 'down',
       KeyK: 'jump',
-      Space: 'jump',
-      KeyW: 'jump'
+      Space: 'jump'
     };
 
     window.addEventListener('keydown', (event) => {
       const mapped = keyboardMap[event.code];
-      if (!mapped) return;
+      // Skip keys that are not mapped so browser defaults can continue to run.
+      if (!mapped) {
+        return;
+      }
       event.preventDefault();
       setKeyState(mapped, true);
     });
 
     window.addEventListener('keyup', (event) => {
       const mapped = keyboardMap[event.code];
-      if (!mapped) return;
+      // Skip keys that are not mapped so browser defaults can continue to run.
+      if (!mapped) {
+        return;
+      }
       event.preventDefault();
       setKeyState(mapped, false);
     });
 
-    // Wire up on-screen buttons so mobile players can roll and jump.
+    // Wire up on-screen buttons so mobile players can roll, jump, and move around the map.
     const touchButtons = document.querySelectorAll('#touch-controls button');
+    // Attach pointer listeners to each touch control button.
     touchButtons.forEach((button) => {
       const input = button.dataset.input;
+      // Pointer down handler that marks the button pressed.
       const press = (event) => {
         event.preventDefault();
         button.classList.add('active');
         setKeyState(input, true);
       };
+      // Pointer release handler that unsets the pressed state.
       const release = (event) => {
         event.preventDefault();
         button.classList.remove('active');

@@ -4,18 +4,18 @@
    * Graph of overworld nodes players can travel between, each with screen coordinates and neighbor links.
    */
   const nodes = [
-    { id: 'home', label: 'Home Base', x: 120, y: 190, links: ['grove', 'camp'] },
-    { id: 'grove', label: 'Spooky Grove', x: 230, y: 190, links: ['home', 'cliff', 'marsh'] },
-    { id: 'camp', label: 'Bandit Camp', x: 150, y: 120, links: ['home', 'ridge'] },
-    { id: 'marsh', label: 'Foggy Marsh', x: 280, y: 240, links: ['grove', 'cavern'] },
-    { id: 'cliff', label: 'Cliff Road', x: 330, y: 150, links: ['grove', 'bridge', 'ridge'] },
-    { id: 'ridge', label: 'Howling Ridge', x: 250, y: 80, links: ['camp', 'cliff', 'tower'] },
-    { id: 'bridge', label: 'Moonlit Bridge', x: 430, y: 190, links: ['cliff', 'ruins', 'cavern'] },
-    { id: 'cavern', label: 'Echo Cavern', x: 380, y: 250, links: ['marsh', 'bridge', 'shore'] },
-    { id: 'ruins', label: 'Ruins', x: 530, y: 140, links: ['bridge', 'gate', 'tower'] },
-    { id: 'shore', label: 'Tide Shore', x: 480, y: 260, links: ['cavern', 'gate'] },
-    { id: 'tower', label: 'Watcher Tower', x: 360, y: 60, links: ['ridge', 'ruins'] },
-    { id: 'gate', label: 'Skeleton Gate', x: 640, y: 190, links: ['ruins', 'shore'] }
+    { id: 'home', label: 'Home Base', x: 120, y: 220, links: ['grove', 'camp'] },
+    { id: 'grove', label: 'Spooky Grove', x: 220, y: 220, links: ['home', 'cliff', 'marsh'] },
+    { id: 'camp', label: 'Bandit Camp', x: 120, y: 140, links: ['home', 'ridge'] },
+    { id: 'marsh', label: 'Foggy Marsh', x: 220, y: 300, links: ['grove', 'cavern'] },
+    { id: 'cliff', label: 'Cliff Road', x: 320, y: 220, links: ['grove', 'bridge', 'ridge'] },
+    { id: 'ridge', label: 'Howling Ridge', x: 320, y: 140, links: ['camp', 'cliff', 'tower'] },
+    { id: 'bridge', label: 'Moonlit Bridge', x: 420, y: 220, links: ['cliff', 'ruins', 'cavern'] },
+    { id: 'cavern', label: 'Echo Cavern', x: 420, y: 300, links: ['marsh', 'bridge', 'shore'] },
+    { id: 'ruins', label: 'Ruins', x: 520, y: 220, links: ['bridge', 'gate', 'tower'] },
+    { id: 'shore', label: 'Tide Shore', x: 620, y: 300, links: ['cavern', 'gate'] },
+    { id: 'tower', label: 'Watcher Tower', x: 520, y: 140, links: ['ridge', 'ruins'] },
+    { id: 'gate', label: 'Skeleton Gate', x: 620, y: 220, links: ['ruins', 'shore'] }
   ];
 
   /**
@@ -58,7 +58,7 @@
   // Cooldown timer to prevent multi-move per button hold.
   let moveCooldown = 0;
   // Track previous frame input so we can only react to transitions.
-  const lastInput = { left: false, right: false, jump: false };
+  const lastInput = { left: false, right: false, up: false, down: false, jump: false };
 
   /**
    * Stores in-progress travel between nodes for smooth interpolation.
@@ -95,6 +95,8 @@
     moveCooldown = 0;
     lastInput.left = false;
     lastInput.right = false;
+    lastInput.up = false;
+    lastInput.down = false;
     lastInput.jump = false;
   }
 
@@ -114,13 +116,17 @@
       return;
     }
 
-    // Pick the neighbor that sits in the requested direction, prioritizing closer x distances.
+    // Pick the neighbor that sits in the requested direction, prioritizing closer axis distances.
     let candidate = null;
     for (const neighborId of currentNode.links) {
       // Loop over each neighbor to find the best fit for the chosen direction.
       const neighbor = nodeMap.get(neighborId);
       // Skip links that are misconfigured rather than crash the overworld navigation.
       if (!neighbor) {
+        continue;
+      }
+      // Only allow axis-aligned travel so map lines never slant.
+      if (neighbor.x !== currentNode.x && neighbor.y !== currentNode.y) {
         continue;
       }
       // Skip neighbors that are not in the requested direction relative to the player node.
@@ -130,8 +136,24 @@
       if (direction === 'right' && neighbor.x <= currentNode.x) {
         continue;
       }
-      // Record the closest neighbor so traversal feels predictable.
-      if (!candidate || Math.abs(neighbor.x - currentNode.x) < Math.abs(candidate.x - currentNode.x)) {
+      if (direction === 'up' && neighbor.y >= currentNode.y) {
+        continue;
+      }
+      if (direction === 'down' && neighbor.y <= currentNode.y) {
+        continue;
+      }
+      // Record the closest neighbor so traversal feels predictable along the chosen axis.
+      const axisDistance =
+        direction === 'left' || direction === 'right'
+          ? Math.abs(neighbor.x - currentNode.x)
+          : Math.abs(neighbor.y - currentNode.y);
+      const currentBestDistance =
+        !candidate
+          ? Infinity
+          : direction === 'left' || direction === 'right'
+            ? Math.abs(candidate.x - currentNode.x)
+            : Math.abs(candidate.y - currentNode.y);
+      if (!candidate || axisDistance < currentBestDistance) {
         candidate = neighbor;
       }
     }
@@ -187,6 +209,16 @@
       attemptMove('right', playSound);
     }
 
+    // React to an up press to climb the grid when the cooldown allows movement.
+    if (keys.up && !lastInput.up && moveCooldown <= 0) {
+      attemptMove('up', playSound);
+    }
+
+    // React to a down press to descend the grid when the cooldown allows movement.
+    if (keys.down && !lastInput.down && moveCooldown <= 0) {
+      attemptMove('down', playSound);
+    }
+
     // Track jump presses to trigger level launch from the current node.
     const launchRequested = keys.jump && !lastInput.jump;
     if (launchRequested) {
@@ -195,6 +227,8 @@
 
     lastInput.left = keys.left;
     lastInput.right = keys.right;
+    lastInput.up = keys.up;
+    lastInput.down = keys.down;
     lastInput.jump = keys.jump;
 
     // Ease the camera toward the pizza while keeping it inside the map.
