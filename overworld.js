@@ -4,12 +4,18 @@
    * Graph of overworld nodes players can travel between, each with screen coordinates and neighbor links.
    */
   const nodes = [
-    { id: 'home', label: 'Home Base', x: 120, y: 190, links: ['grove'] },
-    { id: 'grove', label: 'Spooky Grove', x: 220, y: 190, links: ['home', 'cliff'] },
-    { id: 'cliff', label: 'Cliff Road', x: 320, y: 160, links: ['grove', 'bridge'] },
-    { id: 'bridge', label: 'Moonlit Bridge', x: 420, y: 190, links: ['cliff', 'ruins'] },
-    { id: 'ruins', label: 'Ruins', x: 520, y: 150, links: ['bridge', 'gate'] },
-    { id: 'gate', label: 'Skeleton Gate', x: 620, y: 190, links: ['ruins'] }
+    { id: 'home', label: 'Home Base', x: 120, y: 190, links: ['grove', 'camp'] },
+    { id: 'grove', label: 'Spooky Grove', x: 230, y: 190, links: ['home', 'cliff', 'marsh'] },
+    { id: 'camp', label: 'Bandit Camp', x: 150, y: 120, links: ['home', 'ridge'] },
+    { id: 'marsh', label: 'Foggy Marsh', x: 280, y: 240, links: ['grove', 'cavern'] },
+    { id: 'cliff', label: 'Cliff Road', x: 330, y: 150, links: ['grove', 'bridge', 'ridge'] },
+    { id: 'ridge', label: 'Howling Ridge', x: 250, y: 80, links: ['camp', 'cliff', 'tower'] },
+    { id: 'bridge', label: 'Moonlit Bridge', x: 430, y: 190, links: ['cliff', 'ruins', 'cavern'] },
+    { id: 'cavern', label: 'Echo Cavern', x: 380, y: 250, links: ['marsh', 'bridge', 'shore'] },
+    { id: 'ruins', label: 'Ruins', x: 530, y: 140, links: ['bridge', 'gate', 'tower'] },
+    { id: 'shore', label: 'Tide Shore', x: 480, y: 260, links: ['cavern', 'gate'] },
+    { id: 'tower', label: 'Watcher Tower', x: 360, y: 60, links: ['ridge', 'ruins'] },
+    { id: 'gate', label: 'Skeleton Gate', x: 640, y: 190, links: ['ruins', 'shore'] }
   ];
 
   /**
@@ -17,22 +23,74 @@
    */
   const nodeMap = new Map(nodes.map((node) => [node.id, node]));
 
+  /**
+   * Camera that keeps the player centered while respecting map extents.
+   */
+  const camera = { x: 0, y: 0 };
+
+  /**
+   * Bounds of the map derived from node coordinates, expanded for padding.
+   */
+  const mapBounds = nodes.reduce(
+    (bounds, node) => {
+      // Spread each node into the running bounding box so the camera clamp stays correct.
+      return {
+        minX: Math.min(bounds.minX, node.x),
+        maxX: Math.max(bounds.maxX, node.x),
+        minY: Math.min(bounds.minY, node.y),
+        maxY: Math.max(bounds.maxY, node.y)
+      };
+    },
+    { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity }
+  );
+
+  // Soft padding around the playable area so the camera is not glued to the nodes.
+  const mapPadding = 80;
+  mapBounds.minX -= mapPadding;
+  mapBounds.maxX += mapPadding;
+  mapBounds.minY -= mapPadding;
+  mapBounds.maxY += mapPadding;
+
   // Current location within the overworld graph.
   let currentNodeId = 'home';
+  // Visual representation of the pizza's position, animated between nodes.
+  const pizzaMarker = { x: nodeMap.get(currentNodeId).x, y: nodeMap.get(currentNodeId).y };
   // Cooldown timer to prevent multi-move per button hold.
   let moveCooldown = 0;
   // Track previous frame input so we can only react to transitions.
   const lastInput = { left: false, right: false, jump: false };
 
   /**
+   * Stores in-progress travel between nodes for smooth interpolation.
+   */
+  const travelState = {
+    from: null,
+    to: null,
+    t: 0,
+    duration: 0
+  };
+
+  /**
    * Sets the overworld to its initial state each time the player enters it.
    */
   function enter(score) {
     // When the player has picked up some score, start them further along the path to honor progress.
+    // Shift the starting node if the player has earned enough points to unlock mid-map shortcuts.
     if (score >= 10) {
       currentNodeId = 'cliff';
     } else {
       currentNodeId = 'home';
+    }
+    // Reset travel state so we snap the marker to the current node on entry.
+    travelState.from = null;
+    travelState.to = null;
+    travelState.t = 0;
+    travelState.duration = 0;
+    const startNode = nodeMap.get(currentNodeId);
+    // Update the marker immediately in case the caller re-enters the overworld mid-run.
+    if (startNode) {
+      pizzaMarker.x = startNode.x;
+      pizzaMarker.y = startNode.y;
     }
     moveCooldown = 0;
     lastInput.left = false;
@@ -46,7 +104,13 @@
   function attemptMove(direction, playSound) {
     // Fetch current node details so we can check connected neighbors.
     const currentNode = nodeMap.get(currentNodeId);
+    // Abort movement requests if the current node lookup failed.
     if (!currentNode) {
+      return;
+    }
+
+    // Ignore input while the pizza is already sliding between nodes.
+    if (travelState.to) {
       return;
     }
 
@@ -55,6 +119,7 @@
     for (const neighborId of currentNode.links) {
       // Loop over each neighbor to find the best fit for the chosen direction.
       const neighbor = nodeMap.get(neighborId);
+      // Skip links that are misconfigured rather than crash the overworld navigation.
       if (!neighbor) {
         continue;
       }
@@ -73,7 +138,12 @@
 
     // Move to the neighbor and play a click if the neighbor existed in the desired direction.
     if (candidate) {
-      currentNodeId = candidate.id;
+      const distance = Math.hypot(candidate.x - currentNode.x, candidate.y - currentNode.y);
+      // Kick off a lerp between the current node and the next one to animate travel.
+      travelState.from = currentNode;
+      travelState.to = candidate;
+      travelState.t = 0;
+      travelState.duration = Math.max(0.001, distance / 220);
       moveCooldown = 0.22;
       if (typeof playSound === 'function') {
         playSound('coin');
@@ -88,6 +158,21 @@
     // Guard against missing input state because the platformer code drives this module.
     if (!keys) {
       return null;
+    }
+
+    // Progress the travel animation so node swaps feel smooth.
+    if (travelState.to && travelState.from) {
+      travelState.t = Math.min(1, travelState.t + dt / travelState.duration);
+      const eased = 0.5 - Math.cos(travelState.t * Math.PI) * 0.5;
+      // Interpolate the marker between start and target nodes.
+      pizzaMarker.x = travelState.from.x + (travelState.to.x - travelState.from.x) * eased;
+      pizzaMarker.y = travelState.from.y + (travelState.to.y - travelState.from.y) * eased;
+      // Finalize the hop once the interpolation completes.
+      if (travelState.t >= 1) {
+        currentNodeId = travelState.to.id;
+        travelState.to = null;
+        travelState.from = null;
+      }
     }
 
     moveCooldown = Math.max(0, moveCooldown - dt);
@@ -111,6 +196,22 @@
     lastInput.left = keys.left;
     lastInput.right = keys.right;
     lastInput.jump = keys.jump;
+
+    // Ease the camera toward the pizza while keeping it inside the map.
+    const canvas = document.getElementById('game');
+    // Ensure the canvas is available before we attempt to read dimensions.
+    if (canvas && canvas.width && canvas.height) {
+      const targetX = pizzaMarker.x - canvas.width * 0.5;
+      const targetY = pizzaMarker.y - canvas.height * 0.5;
+      const maxCamX = Math.max(mapBounds.minX, mapBounds.maxX - canvas.width);
+      const maxCamY = Math.max(mapBounds.minY, mapBounds.maxY - canvas.height);
+      // Clamp the desired camera target to remain inside the defined bounds.
+      const desiredX = Math.min(maxCamX, Math.max(mapBounds.minX, targetX));
+      const desiredY = Math.min(maxCamY, Math.max(mapBounds.minY, targetY));
+      camera.x += (desiredX - camera.x) * 0.18;
+      camera.y += (desiredY - camera.y) * 0.18;
+    }
+
     return null;
   }
 
@@ -143,6 +244,8 @@
     ctx.strokeStyle = '#3a4c9e';
     ctx.lineWidth = 6;
     ctx.lineCap = 'round';
+    ctx.save();
+    ctx.translate(-camera.x, -camera.y);
     for (const node of nodes) {
       // Loop over each node's links to draw the outward path segments.
       for (const linkId of node.links) {
@@ -151,6 +254,7 @@
           continue;
         }
         const target = nodeMap.get(linkId);
+        // Ignore missing neighbor references so one bad link does not break the render.
         if (!target) {
           continue;
         }
@@ -179,6 +283,19 @@
       ctx.fillText(node.label, node.x, node.y + 24);
     }
 
+    // Draw the pizza marker traveling between nodes.
+    ctx.save();
+    ctx.translate(pizzaMarker.x, pizzaMarker.y);
+    ctx.fillStyle = '#ffdf7f';
+    ctx.beginPath();
+    ctx.arc(0, 0, 11, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#bf7f2f';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.restore();
+    ctx.restore();
+
     // Provide a hint banner explaining how to start the selected level.
     ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
     ctx.fillRect(12, 12, 220, 44);
@@ -195,6 +312,7 @@
     enter,
     update,
     draw,
+    // Provide read-only access to the currently selected node for HUD overlays.
     getCurrentNode: () => currentNodeId
   };
 })();
