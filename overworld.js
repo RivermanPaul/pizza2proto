@@ -16,7 +16,8 @@
     { id: 'bend', label: 'B', x: 80, y: 360, links: ['turn', 'stage5'] },
     { id: 'stage5', label: '5', x: 160, y: 360, links: ['bend', 'stage6'] },
     { id: 'stage6', label: '6', x: 240, y: 360, links: ['stage5', 'ferry'] },
-    { id: 'ferry', label: 'Boat', x: 320, y: 360, links: ['stage6', 'riverTurn'] },
+    { id: 'ferry', label: 'Boat', x: 320, y: 360, links: ['riverTurn', 'stage6'] },
+    // Node A sits directly above the boat so pressing down sails correctly to the ferry stop.
     { id: 'riverTurn', label: 'A', x: 320, y: 280, links: ['ferry', 'bridge'] }
   ];
 
