@@ -127,6 +127,7 @@
   <script src="matter.min.js"></script>
   <script src="music.js"></script>
   <script src="enemies.js"></script>
+  <script src="overworld.js"></script>
   <script>
     // Canvas and audio bootstrap.
     const canvas = document.getElementById('game');
@@ -168,6 +169,22 @@
       jump: false
     };
     let jumpQueued = false;
+
+    // Game mode toggles that gate whether the player is in platforming or overworld exploration.
+    const gameModes = { PLATFORMER: 'platformer', OVERWORLD: 'overworld' };
+    let currentMode = gameModes.PLATFORMER;
+
+    // Overworld controller reference with safe fallbacks in case the module fails to load.
+    const overworld = window.Overworld || {
+      // No-op entry point used only when the overworld module fails to load.
+      enter: () => {},
+      // Idle update placeholder that keeps the game loop from breaking.
+      update: () => null,
+      // Blank draw placeholder so rendering keeps running without the module.
+      draw: () => {},
+      // Static node accessor placeholder used by HUD code.
+      getCurrentNode: () => 'home'
+    };
 
     // Update input map for keyboard/touch controls.
     function setKeyState(key, pressed) {
@@ -290,9 +307,6 @@
     });
 
     const boundaryThickness = 400;
-    const leftWall = Bodies.rectangle(-boundaryThickness / 2, world.floorY, boundaryThickness, 4000, {
-      isStatic: true
-    });
     const rightWall = Bodies.rectangle(
       world.width + boundaryThickness / 2,
       world.floorY,
@@ -300,7 +314,7 @@
       4000,
       { isStatic: true }
     );
-    Composite.add(physicsWorld, [leftWall, rightWall]);
+    Composite.add(physicsWorld, [rightWall]);
 
     const pizzaBody = Bodies.circle(pizza.x, pizza.y, pizza.radius, {
       label: 'pizza',
@@ -399,6 +413,23 @@
       pizza.health = 3;
       pizza.invincibleTimer = 0;
       enemies.resetSkeletons(world.floorY - 76);
+    }
+
+    // Moves the player into the overworld map when they roll beyond the left edge of the platforming space.
+    function enterOverworld() {
+      currentMode = gameModes.OVERWORLD;
+      Body.setPosition(pizzaBody, { x: 140, y: 80 });
+      Body.setVelocity(pizzaBody, { x: 0, y: 0 });
+      Body.setAngle(pizzaBody, 0);
+      Body.setAngularVelocity(pizzaBody, 0);
+      overworld.enter(pizza.score);
+    }
+
+    // Restarts the platforming stage from the overworld selection after the player confirms a level.
+    function exitOverworld() {
+      resetGame();
+      currentMode = gameModes.PLATFORMER;
+      camera.x = 0;
     }
 
     function updateParticles(dt) {
@@ -559,22 +590,44 @@
 
     let lastTime = 0;
     function loop(timestamp) {
+      // Initialize the previous time on the very first frame.
       if (!lastTime) lastTime = timestamp;
       const dt = Math.min(0.033, (timestamp - lastTime) / 1000);
       lastTime = timestamp;
 
       try {
-        updatePizza(dt);
-        enemies.updateSkeletons(dt, pizza, pizzaBody, physicsSettings, playSound, spawnParticle, resetGame);
-        updateParticles(dt);
-        updateCamera();
+        // Run platformer updates when the player is inside the action stage.
+        if (currentMode === gameModes.PLATFORMER) {
+          updatePizza(dt);
+          enemies.updateSkeletons(dt, pizza, pizzaBody, physicsSettings, playSound, spawnParticle, resetGame);
+          updateParticles(dt);
+          updateCamera();
 
-        drawBackground();
-        drawPlatforms();
-        enemies.drawSkeletons(ctx, camera.x);
-        drawPizza();
-        drawParticles();
-        drawHUD();
+          // When the pizza rolls off the left side, hop into the overworld map.
+          if (pizza.x < -80) {
+            enterOverworld();
+          }
+
+          // Only draw the platformer scene if the player has not swapped to the overworld mid-frame.
+          if (currentMode === gameModes.PLATFORMER) {
+            drawBackground();
+            drawPlatforms();
+            enemies.drawSkeletons(ctx, camera.x);
+            drawPizza();
+            drawParticles();
+            drawHUD();
+          } else {
+            overworld.draw(ctx);
+          }
+        } else {
+          // Drive overworld navigation when the player is outside the action stage.
+          const overworldAction = overworld.update(dt, keys, playSound);
+          overworld.draw(ctx);
+          // Return to the action stage when the player confirms a level node.
+          if (overworldAction && overworldAction.type === 'launch-level') {
+            exitOverworld();
+          }
+        }
       } catch (err) {
         drawErrorOverlay(err && err.message ? err.message : String(err));
         return;
