@@ -65,11 +65,24 @@
     #touch-controls {
       display: flex;
       justify-content: center;
+      align-items: center;
       gap: 18px;
       flex-wrap: wrap;
       margin-top: 12px;
       user-select: none;
       touch-action: manipulation;
+    }
+    #touch-controls .dpad {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+    #touch-controls .dpad-row {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
     }
     #touch-controls .jump-button {
       margin-left: 12px;
@@ -120,10 +133,16 @@
       </div>
     </div>
     <div id="touch-controls">
-      <button data-input="left" aria-label="Move Left">◀</button>
-      <button data-input="right" aria-label="Move Right">▶</button>
-      <button data-input="up" aria-label="Move Up">▲</button>
-      <button data-input="down" aria-label="Move Down">▼</button>
+      <div class="dpad">
+        <div class="dpad-row">
+          <button data-input="up" aria-label="Move Up">▲</button>
+        </div>
+        <div class="dpad-row">
+          <button data-input="left" aria-label="Move Left">◀</button>
+          <button data-input="down" aria-label="Move Down">▼</button>
+          <button data-input="right" aria-label="Move Right">▶</button>
+        </div>
+      </div>
       <button class="jump-button" data-input="jump" aria-label="Jump">⬆</button>
     </div>
   </div>

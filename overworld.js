@@ -4,18 +4,20 @@
    * Graph of overworld nodes players can travel between, each with screen coordinates and neighbor links.
    */
   const nodes = [
-    { id: 'home', label: 'Home Base', x: 120, y: 220, links: ['grove', 'camp'] },
-    { id: 'grove', label: 'Spooky Grove', x: 220, y: 220, links: ['home', 'cliff', 'marsh'] },
-    { id: 'camp', label: 'Bandit Camp', x: 120, y: 140, links: ['home', 'ridge'] },
-    { id: 'marsh', label: 'Foggy Marsh', x: 220, y: 300, links: ['grove', 'cavern'] },
-    { id: 'cliff', label: 'Cliff Road', x: 320, y: 220, links: ['grove', 'bridge', 'ridge'] },
-    { id: 'ridge', label: 'Howling Ridge', x: 320, y: 140, links: ['camp', 'cliff', 'tower'] },
-    { id: 'bridge', label: 'Moonlit Bridge', x: 420, y: 220, links: ['cliff', 'ruins', 'cavern'] },
-    { id: 'cavern', label: 'Echo Cavern', x: 420, y: 300, links: ['marsh', 'bridge', 'shore'] },
-    { id: 'ruins', label: 'Ruins', x: 520, y: 220, links: ['bridge', 'gate', 'tower'] },
-    { id: 'shore', label: 'Tide Shore', x: 620, y: 300, links: ['cavern', 'gate'] },
-    { id: 'tower', label: 'Watcher Tower', x: 520, y: 140, links: ['ridge', 'ruins'] },
-    { id: 'gate', label: 'Skeleton Gate', x: 620, y: 220, links: ['ruins', 'shore'] }
+    { id: 'start', label: 'Start', x: 80, y: 200, links: ['stage1', 'turn'] },
+    { id: 'stage1', label: '1', x: 160, y: 200, links: ['start', 'stage2'] },
+    { id: 'stage2', label: '2', x: 240, y: 200, links: ['stage1', 'stage3'] },
+    { id: 'stage3', label: '3', x: 320, y: 200, links: ['stage2', 'stage4'] },
+    { id: 'stage4', label: '4', x: 320, y: 280, links: ['stage3', 'bridge'] },
+    { id: 'bridge', label: 'G', x: 440, y: 280, links: ['stage4', 'castleGate', 'riverTurn'] },
+    { id: 'castleGate', label: 'Castle', x: 520, y: 280, links: ['bridge', 'keep'] },
+    { id: 'keep', label: 'Help', x: 520, y: 200, links: ['castleGate'] },
+    { id: 'turn', label: 'Path', x: 80, y: 280, links: ['start', 'bend'] },
+    { id: 'bend', label: 'B', x: 80, y: 360, links: ['turn', 'stage5'] },
+    { id: 'stage5', label: '5', x: 160, y: 360, links: ['bend', 'stage6'] },
+    { id: 'stage6', label: '6', x: 240, y: 360, links: ['stage5', 'ferry'] },
+    { id: 'ferry', label: 'Boat', x: 320, y: 360, links: ['stage6', 'riverTurn'] },
+    { id: 'riverTurn', label: 'A', x: 320, y: 280, links: ['ferry', 'bridge'] }
   ];
 
   /**
@@ -52,7 +54,7 @@
   mapBounds.maxY += mapPadding;
 
   // Current location within the overworld graph.
-  let currentNodeId = 'home';
+  let currentNodeId = 'start';
   // Visual representation of the pizza's position, animated between nodes.
   const pizzaMarker = { x: nodeMap.get(currentNodeId).x, y: nodeMap.get(currentNodeId).y };
   // Cooldown timer to prevent multi-move per button hold.
@@ -77,9 +79,9 @@
     // When the player has picked up some score, start them further along the path to honor progress.
     // Shift the starting node if the player has earned enough points to unlock mid-map shortcuts.
     if (score >= 10) {
-      currentNodeId = 'cliff';
+      currentNodeId = 'stage3';
     } else {
-      currentNodeId = 'home';
+      currentNodeId = 'start';
     }
     // Reset travel state so we snap the marker to the current node on entry.
     travelState.from = null;
