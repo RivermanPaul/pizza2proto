@@ -22,10 +22,33 @@
     if (!AudioContextClass) {
       return { start() {}, stop() {} };
     }
-    const ctx = new AudioContextClass();
-    const master = ctx.createGain();
-    master.gain.value = 0.32;
-    master.connect(ctx.destination);
+    let ctx = null;
+    let master = null;
+
+    // Build or rebuild the Web Audio graph so mobile autoplay policies allow music.
+    function buildContextIfNeeded() {
+      // Create a fresh AudioContext when none exists or the old one closed.
+      if (!ctx || ctx.state === 'closed') {
+        ctx = new AudioContextClass();
+        master = ctx.createGain();
+        master.gain.value = 0.32;
+        master.connect(ctx.destination);
+      }
+    }
+
+    // Ensure the context is running, resuming it inside the user gesture unlock path.
+    function ensureRunningContext() {
+      buildContextIfNeeded();
+      // Abort early if a context still could not be constructed.
+      if (!ctx) {
+        return Promise.reject(new Error('AudioContext unavailable'));
+      }
+      // Resume suspended or interrupted contexts so playback is allowed.
+      if (ctx.state === 'suspended' || ctx.state === 'interrupted') {
+        return ctx.resume();
+      }
+      return Promise.resolve();
+    }
 
     const tempo = 132;
     const stepDur = 60 / tempo / 2;
@@ -67,6 +90,8 @@
 
     // Queue a single pitched oscillator tone.
     function scheduleTone(note, time, duration, type, volume) {
+      // Skip scheduling when the context is unavailable.
+      if (!ctx || ctx.state === 'closed') return;
       const freq = noteToFreq(note);
       if (!freq) return;
       const osc = ctx.createOscillator();
@@ -83,9 +108,12 @@
 
     // Queue a short burst of filtered noise for percussion.
     function scheduleNoise(time, duration, volume) {
+      // Skip scheduling when the context is unavailable.
+      if (!ctx || ctx.state === 'closed') return;
       const length = Math.max(1, Math.floor(duration * ctx.sampleRate));
       const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
       const data = buffer.getChannelData(0);
+      // Fill the buffer with white noise samples.
       for (let i = 0; i < length; i++) {
         data[i] = Math.random() * 2 - 1;
       }
@@ -123,7 +151,14 @@
 
     // Drive scheduling ahead of audio playback time.
     function scheduler() {
+      // Exit if playback was stopped externally.
       if (!playing) return;
+      // Stop scheduling when the context is not running.
+      if (!ctx || ctx.state !== 'running') {
+        playing = false;
+        return;
+      }
+      // Schedule steps until the lookahead window is filled.
       while (nextTime < ctx.currentTime + lookahead) {
         scheduleStep(nextTime);
         nextTime += stepDur;
@@ -134,12 +169,21 @@
 
     // Begin playback loop if not already running.
     function start() {
-      if (playing) return;
-      ctx.resume();
+      // Avoid scheduling multiple overlapping music loops.
+      if (playing) return Promise.resolve();
       playing = true;
-      stepIndex = 0;
-      nextTime = ctx.currentTime + 0.05;
-      scheduler();
+      return ensureRunningContext().then(() => {
+        if (!ctx || ctx.state !== 'running') {
+          playing = false;
+          return;
+        }
+        stepIndex = 0;
+        nextTime = ctx.currentTime + 0.05;
+        scheduler();
+      }).catch(() => {
+        playing = false;
+        throw new Error('Music context failed to start');
+      });
     }
 
     // Halt playback and clear pending timers.
@@ -158,8 +202,10 @@
 
   // Prime audio and start music on first user gesture.
   function unlockAudio() {
+    // Avoid replaying the unlock routine once audio is primed.
     if (audioUnlocked) return;
     audioUnlocked = true;
+    // Prime each sound effect so mobile browsers allow later playback.
     Object.values(soundEffects).forEach((sound) => {
       const base = sound.audio;
       base.muted = true;
@@ -177,9 +223,17 @@
         base.muted = false;
       }
     });
-    music.start();
+    const startPromise = music.start();
+    // Retry unlock hooks if the music start promise is rejected on mobile.
+    if (startPromise && typeof startPromise.catch === 'function') {
+      startPromise.catch(() => {
+        audioUnlocked = false;
+        initAudio();
+      });
+    }
     window.removeEventListener('pointerdown', unlockAudio);
     window.removeEventListener('keydown', unlockAudio);
+    window.removeEventListener('touchstart', unlockAudio);
   }
 
   function playSound(key) {
@@ -197,6 +251,7 @@
   function initAudio() {
     window.addEventListener('pointerdown', unlockAudio);
     window.addEventListener('keydown', unlockAudio);
+    window.addEventListener('touchstart', unlockAudio, { passive: true });
   }
 
   window.AudioManager = {
