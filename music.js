@@ -210,6 +210,7 @@
 
   let audioUnlocked = false;
   let listenersAttached = false;
+  let globallyMuted = true;
 
   // Prime audio and start music on first user gesture.
   function unlockAudio() {
@@ -226,11 +227,13 @@
         const playPromise = base.play();
         if (playPromise && typeof playPromise.then === 'function') {
           // If the browser returns a promise, pause once the unlock succeeds.
-          playPromise.then(() => {
-            base.pause();
-            base.currentTime = 0;
-            base.muted = false;
-          }).catch(() => {});
+          playPromise
+            .then(() => {
+              base.pause();
+              base.currentTime = 0;
+              base.muted = false;
+            })
+            .catch(() => {});
         } else {
           // Older browsers: fall back to immediate pause/reset after play call.
           base.pause();
@@ -238,6 +241,10 @@
           base.muted = false;
         }
       });
+    }
+    // Skip music start when global mute is active so silence is respected.
+    if (globallyMuted) {
+      return;
     }
     // Always attempt to (re)start music on any user gesture so mobile resume works.
     const startPromise = music.start();
@@ -254,8 +261,8 @@
   // Play a single sound effect instance and suppress platform errors.
   function playSound(key) {
     const sound = soundEffects[key];
-    // Ignore requests for sounds that do not exist in the map.
-    if (!sound) return;
+    // Ignore requests for sounds that do not exist in the map or when muted.
+    if (!sound || globallyMuted) return;
     const instance = sound.audio.cloneNode();
     instance.volume = sound.volume;
     const playPromise = instance.play();
@@ -285,10 +292,29 @@
     });
   }
 
+  // Toggle mute state and start or stop music to match.
+  function setMuted(muted) {
+    globallyMuted = muted;
+    // Stop music immediately when muting to keep the mix silent.
+    if (globallyMuted) {
+      music.stop();
+      return;
+    }
+    // Attempt to resume playback when unmuting so the mix wakes back up.
+    unlockAudio();
+  }
+
+  // Expose whether audio is currently muted.
+  function isMuted() {
+    return globallyMuted;
+  }
+
   window.AudioManager = {
     initAudio,
     playSound,
     unlockAudio,
-    music
+    music,
+    setMuted,
+    isMuted
   };
 })();
