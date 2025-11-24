@@ -1,3 +1,5 @@
-This is a physics base platformer called "pizza vs skeletons 2". you play as a giant pizza. Your character is a circle that rolls around in a physics sim environment. left should roll left, jump should jump, right should roll right, other controller buttons will be unused atm.
+This is a physics base platformer called "pizza vs skeletons 2". you play as a giant pizza. Your character is a circle that rolls around in a physics sim environment. left should roll left, jump should jump, right should roll right, other controller buttons will be unused atm. Most game modes use this basic side scrolling platform engine, but there are many other game modes that will use their own engine entirely. There's also an overworld.
 
 Documentation policy: comment every function, conditional, and loop to describe its role.
+
+references/pizza1src contains source code for the original Pizza Vs. Skeletons (aka "Pizza 1") game, and references/pizza2src contains source code for a Pizza Vs. Skeletons 2 (aka "Pizza 2") prototype. There's no need to read this code unless I mention it specifically. Relevant code will usually be in level.h/cpp and pgo.h/cpp.
