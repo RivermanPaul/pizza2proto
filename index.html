@@ -160,6 +160,7 @@
   <script src="music.js"></script>
   <script src="enemies.js"></script>
   <script src="lake.js"></script>
+  <script src="gladiator.js"></script>
   <script src="overworld.js"></script>
   <script>
     // Canvas and audio bootstrap.
@@ -208,8 +209,8 @@
     let jumpQueued = false;
 
     // Game mode toggles that gate whether the player is in platforming, overworld exploration, or the lake variant.
-    const gameModes = { PLATFORMER: 'platformer', OVERWORLD: 'overworld', LAKE: 'lake' };
-    let currentMode = gameModes.PLATFORMER;
+    const gameModes = { PLATFORMER: 'platformer', OVERWORLD: 'overworld', LAKE: 'lake', GLADIATOR: 'gladiator' };
+    let currentMode = gameModes.GLADIATOR;
     let currentLevelId = 'stage1';
 
     // Overworld controller reference with safe fallbacks in case the module fails to load.
@@ -233,6 +234,21 @@
       // Blank draw placeholder so rendering keeps running without the module.
       draw: () => {}
     };
+
+    // Gladiator controller reference for arena survival levels.
+    const gladiator = window.GladiatorMode || {
+      // Reset gladiator state if the module fails to load so the game loop continues.
+      enter: () => {},
+      // No-op update to keep the main loop alive when gladiator mode is absent.
+      update: () => null,
+      // Blank draw placeholder so rendering keeps running without the module.
+      draw: () => {}
+    };
+
+    // Immediately start the arena mode so stage one matches the overworld labeling.
+    if (currentMode === gameModes.GLADIATOR) {
+      gladiator.enter(playSound);
+    }
 
     // Update input map for keyboard/touch controls.
     function setKeyState(key, pressed) {
@@ -527,15 +543,19 @@
 
     // Restarts the appropriate stage from the overworld selection after the player confirms a level.
     function exitOverworld(levelId) {
-      resetGame();
       currentLevelId = levelId || 'stage1';
       camera.x = 0;
       // Swap into the lake variant when launching level two.
       if (currentLevelId === 'stage2') {
         currentMode = gameModes.LAKE;
         lake.enter(playSound);
+      } else if (currentLevelId === 'stage1') {
+        // Drop into the arena survival mode for the first stage.
+        currentMode = gameModes.GLADIATOR;
+        gladiator.enter(playSound);
       } else {
         // Default to the physics-driven platformer for all other stages.
+        resetGame();
         currentMode = gameModes.PLATFORMER;
       }
     }
@@ -742,6 +762,14 @@
             drawHUD();
           } else {
             overworld.draw(ctx);
+          }
+        } else if (currentMode === gameModes.GLADIATOR) {
+          // Run arena survival when the player enters the Gladiator mode.
+          const gladiatorAction = gladiator.update(dt, keys, playSound);
+          gladiator.draw(ctx);
+          // Return to the overworld after clearing all waves.
+          if (gladiatorAction && gladiatorAction.type === 'return-to-map') {
+            enterOverworld();
           }
         } else if (currentMode === gameModes.OVERWORLD) {
           // Drive overworld navigation when the player is outside the action stage.
