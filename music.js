@@ -19,6 +19,7 @@
   // Generate a simple looping chiptune using Web Audio nodes.
   function createChiptuneMusic() {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    // Bail out gracefully when no Web Audio support exists.
     if (!AudioContextClass) {
       return { start() {}, stop() {} };
     }
@@ -76,8 +77,10 @@
     const freqCache = new Map();
     // Convert note names (e.g. C5) into frequencies with caching.
     function noteToFreq(note) {
+      // Use cached frequency when available to avoid recalculation.
       if (freqCache.has(note)) return freqCache.get(note);
       const match = /^([A-G][b#]?)(\d)$/.exec(note);
+      // Abort on malformed note strings.
       if (!match) return 0;
       const [, name, octaveStr] = match;
       const octave = parseInt(octaveStr, 10);
@@ -93,6 +96,7 @@
       // Skip scheduling when the context is unavailable.
       if (!ctx || ctx.state === 'closed') return;
       const freq = noteToFreq(note);
+      // Skip invalid notes so we do not create silent oscillators.
       if (!freq) return;
       const osc = ctx.createOscillator();
       osc.type = type;
@@ -141,9 +145,13 @@
       const harmonyNote = harmonyPattern[idx];
       const bassNote = bassPattern[idx % bassPattern.length];
 
+      // Add melody voice when the pattern specifies a note.
       if (melodyNote) scheduleTone(melodyNote, time, stepDur * 1.9, 'square', 0.12);
+      // Add harmony voice when the pattern specifies a note.
       if (harmonyNote) scheduleTone(harmonyNote, time, stepDur * 1.4, 'square', 0.08);
+      // Add bass voice when the pattern specifies a note.
       if (bassNote) scheduleTone(bassNote, time, stepDur * 1.9, 'triangle', 0.16);
+      // Trigger percussion noise on beats that flag a hit.
       if (noisePattern[idx % noisePattern.length]) {
         scheduleNoise(time, stepDur * 0.7, 0.08);
       }
@@ -173,6 +181,7 @@
       if (playing) return Promise.resolve();
       playing = true;
       return ensureRunningContext().then(() => {
+        // Bail out when the context is still not running after resume.
         if (!ctx || ctx.state !== 'running') {
           playing = false;
           return;
@@ -189,6 +198,7 @@
     // Halt playback and clear pending timers.
     function stop() {
       playing = false;
+      // Clear the scheduling timer when stopping playback.
       if (timer) {
         clearTimeout(timer);
         timer = null;
@@ -199,49 +209,57 @@
   }
 
   let audioUnlocked = false;
+  let listenersAttached = false;
 
   // Prime audio and start music on first user gesture.
   function unlockAudio() {
+    // Track whether this is the first user interaction that primes audio.
+    const firstUnlock = !audioUnlocked;
     // Avoid replaying the unlock routine once audio is primed.
-    if (audioUnlocked) return;
-    audioUnlocked = true;
-    // Prime each sound effect so mobile browsers allow later playback.
-    Object.values(soundEffects).forEach((sound) => {
-      const base = sound.audio;
-      base.muted = true;
-      base.currentTime = 0;
-      const playPromise = base.play();
-      if (playPromise && typeof playPromise.then === 'function') {
-        playPromise.then(() => {
+    if (firstUnlock) {
+      audioUnlocked = true;
+      // Prime each sound effect so mobile browsers allow later playback.
+      Object.values(soundEffects).forEach((sound) => {
+        const base = sound.audio;
+        base.muted = true;
+        base.currentTime = 0;
+        const playPromise = base.play();
+        if (playPromise && typeof playPromise.then === 'function') {
+          // If the browser returns a promise, pause once the unlock succeeds.
+          playPromise.then(() => {
+            base.pause();
+            base.currentTime = 0;
+            base.muted = false;
+          }).catch(() => {});
+        } else {
+          // Older browsers: fall back to immediate pause/reset after play call.
           base.pause();
           base.currentTime = 0;
           base.muted = false;
-        }).catch(() => {});
-      } else {
-        base.pause();
-        base.currentTime = 0;
-        base.muted = false;
-      }
-    });
+        }
+      });
+    }
+    // Always attempt to (re)start music on any user gesture so mobile resume works.
     const startPromise = music.start();
     // Retry unlock hooks if the music start promise is rejected on mobile.
     if (startPromise && typeof startPromise.catch === 'function') {
       startPromise.catch(() => {
+        // Mark as locked again and reinstall listeners if the start failed.
         audioUnlocked = false;
         initAudio();
       });
     }
-    window.removeEventListener('pointerdown', unlockAudio);
-    window.removeEventListener('keydown', unlockAudio);
-    window.removeEventListener('touchstart', unlockAudio);
   }
 
+  // Play a single sound effect instance and suppress platform errors.
   function playSound(key) {
     const sound = soundEffects[key];
+    // Ignore requests for sounds that do not exist in the map.
     if (!sound) return;
     const instance = sound.audio.cloneNode();
     instance.volume = sound.volume;
     const playPromise = instance.play();
+    // Swallow playback promise rejections to avoid user-facing errors on mobile.
     if (playPromise && typeof playPromise.catch === 'function') {
       playPromise.catch(() => {});
     }
@@ -249,9 +267,22 @@
 
   // Install unlock listeners for gesture-gated playback.
   function initAudio() {
+    // Avoid attaching duplicate listeners if initAudio is called multiple times.
+    if (listenersAttached) return;
+    listenersAttached = true;
+    // Listen for pointer/touch/keyboard input to unlock audio contexts.
     window.addEventListener('pointerdown', unlockAudio);
     window.addEventListener('keydown', unlockAudio);
+    window.addEventListener('click', unlockAudio);
+    window.addEventListener('touchend', unlockAudio, { passive: true });
     window.addEventListener('touchstart', unlockAudio, { passive: true });
+    // Resume audio when the page becomes visible again on mobile browsers.
+    document.addEventListener('visibilitychange', () => {
+      // Attempt to restart music when returning to a foreground tab.
+      if (document.visibilityState === 'visible') {
+        unlockAudio();
+      }
+    });
   }
 
   window.AudioManager = {
