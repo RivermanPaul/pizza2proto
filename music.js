@@ -8,10 +8,10 @@
   }
 
   const soundEffects = {
-    jump: createSound('audio/jump.wav', 0.45),
-    hurt: createSound('audio/hurt.wav', 0.6),
-    enemy: createSound('audio/enemy_defeat.wav', 0.5),
-    coin: createSound('audio/coin.wav', 0.45)
+    jump: createSound('audio/jump.wav', 0.3),
+    hurt: createSound('audio/hurt.wav', 0.38),
+    enemy: createSound('audio/enemy_defeat.wav', 0.34),
+    coin: createSound('audio/coin.wav', 0.3)
   };
 
   const music = createChiptuneMusic();
@@ -24,7 +24,7 @@
     }
     const ctx = new AudioContextClass();
     const master = ctx.createGain();
-    master.gain.value = 0.15;
+    master.gain.value = 0.32;
     master.connect(ctx.destination);
 
     const tempo = 132;

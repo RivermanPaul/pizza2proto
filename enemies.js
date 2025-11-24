@@ -1,7 +1,7 @@
 (function () {
   const { Body } = Matter;
 
-  // Compute closest point on the rectangle to the circle center to detect overlap.
+  // Compute closest point on rect to circle center and return contact info.
   function circleRectContact(circle, rect) {
     const closestX = Math.max(rect.x, Math.min(circle.x, rect.x + rect.width));
     const closestY = Math.max(rect.y, Math.min(circle.y, rect.y + rect.height));
@@ -19,7 +19,7 @@
     };
   }
 
-  // Create a basic patrolling skeleton instance.
+  // Create a simple patrolling skeleton.
   function createSkeleton(x, y, minX, maxX) {
     return {
       x,
@@ -37,7 +37,7 @@
 
   const skeletons = [];
 
-  // Seed skeletons at a shared baseline height.
+  // Seed skeletons at a baseline y so they start grounded.
   function initSkeletons(baseY) {
     skeletons.length = 0;
     skeletons.push(
@@ -47,7 +47,7 @@
     );
   }
 
-  // Restore skeleton state and positions.
+  // Reset skeleton positions/states.
   function resetSkeletons(baseY) {
     skeletons.forEach((skeleton, index) => {
       skeleton.alive = true;
@@ -57,7 +57,7 @@
     });
   }
 
-  // Advance AI, resolve collisions, and trigger stomp/hurt effects.
+  // Update AI, handle collisions, and trigger stomp/hurt outcomes.
   function updateSkeletons(dt, pizza, pizzaBody, physicsSettings, playSound, spawnParticle, onPlayerDeath) {
     for (const skeleton of skeletons) {
       if (!skeleton.alive) {
@@ -108,17 +108,15 @@
             y: pizzaBody.velocity.y + ny * 6 - physicsSettings.jumpSpeed * 0.2
           });
           playSound('hurt');
-          if (pizza.health <= 0) {
-            if (typeof onPlayerDeath === 'function') {
-              onPlayerDeath();
-            }
+          if (pizza.health <= 0 && typeof onPlayerDeath === 'function') {
+            onPlayerDeath();
           }
         }
       }
     }
   }
 
-  // Render each skeleton relative to camera.
+  // Draw skeleton sprites relative to the camera offset.
   function drawSkeletons(ctx, cameraX) {
     for (const skeleton of skeletons) {
       const x = skeleton.x - cameraX;
@@ -147,6 +145,3 @@
     circleRectContact
   };
 })();
-(function () {
-  const { Body } = Matter;
-(function () {

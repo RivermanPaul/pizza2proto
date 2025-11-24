@@ -124,7 +124,7 @@
     </div>
   </div>
 
-  <script src="https://unpkg.com/matter-js@0.20.0/build/matter.min.js"></script>
+  <script src="matter.min.js"></script>
   <script src="music.js"></script>
   <script src="enemies.js"></script>
   <script>
@@ -134,6 +134,31 @@
     const audio = window.AudioManager;
     audio.initAudio();
     const playSound = audio.playSound;
+    if (!window.Matter) {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#fff';
+      ctx.font = '16px monospace';
+      ctx.fillText('Matter.js failed to load. Game halted.', 20, 40);
+      throw new Error('Matter.js missing');
+    }
+    // Surface runtime errors directly on the canvas for easier local debugging.
+    function drawErrorOverlay(message, source, lineno, colno) {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#fff';
+      ctx.font = '14px monospace';
+      const msg = typeof message === 'string' ? message : 'Runtime error';
+      ctx.fillText(msg, 10, 24);
+      if (source) {
+        ctx.fillText(`${source}:${lineno || 0}:${colno || 0}`, 10, 44);
+      }
+    }
+
+    window.onerror = (message, source, lineno, colno) => {
+      drawErrorOverlay(message, source, lineno, colno);
+      return false;
+    };
 
     const { Engine, Bodies, Body, Composite, Events } = Matter;
 
@@ -342,7 +367,12 @@
       pizza.grounded = groundedContacts.size > 0;
     });
 
-    const enemies = window.EnemySystem;
+    const enemies = window.EnemySystem || {
+      initSkeletons: () => {},
+      resetSkeletons: () => {},
+      updateSkeletons: () => {},
+      drawSkeletons: () => {}
+    };
     enemies.initSkeletons(world.floorY - 76);
 
     const particles = [];
@@ -533,17 +563,22 @@
       const dt = Math.min(0.033, (timestamp - lastTime) / 1000);
       lastTime = timestamp;
 
-      updatePizza(dt);
-      enemies.updateSkeletons(dt, pizza, pizzaBody, physicsSettings, playSound, spawnParticle, resetGame);
-      updateParticles(dt);
-      updateCamera();
+      try {
+        updatePizza(dt);
+        enemies.updateSkeletons(dt, pizza, pizzaBody, physicsSettings, playSound, spawnParticle, resetGame);
+        updateParticles(dt);
+        updateCamera();
 
-      drawBackground();
-      drawPlatforms();
-      enemies.drawSkeletons(ctx, camera.x);
-      drawPizza();
-      drawParticles();
-      drawHUD();
+        drawBackground();
+        drawPlatforms();
+        enemies.drawSkeletons(ctx, camera.x);
+        drawPizza();
+        drawParticles();
+        drawHUD();
+      } catch (err) {
+        drawErrorOverlay(err && err.message ? err.message : String(err));
+        return;
+      }
 
       requestAnimationFrame(loop);
     }
