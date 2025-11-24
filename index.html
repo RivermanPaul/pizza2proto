@@ -263,10 +263,11 @@
     };
 
     const physicsSettings = {
-      rollForce: 0.0027,
-      jumpSpeed: 16.5,
-      maxSpeed: 11.2,
-      gravity: 1.7
+      rollForce: 0.0032,
+      jumpSpeed: 10,
+      maxSpeed: 4,
+      gravity: 0.1,
+      maxSpin: 4
     };
 
     const world = {
@@ -301,7 +302,7 @@
         platform.y + platform.height / 2,
         platform.width,
         platform.height,
-        { isStatic: true, friction: 0.9, restitution: 0 }
+        { isStatic: true, friction: 1, restitution: 0.0 }
       );
       Composite.add(physicsWorld, body);
       return { ...platform, body };
@@ -320,35 +321,44 @@
     );
     Composite.add(physicsWorld, [leftWall, rightWall]);
 
-    const pizzaCore = Bodies.circle(pizza.x, pizza.y, pizza.radius, {
-      restitution: 0.05,
-      friction: 0.12,
+    const pizzaBody = Bodies.circle(pizza.x, pizza.y, pizza.radius, {
+      label: 'pizza',
+      restitution: 0.0,
+      friction: 0.35,
+      frictionStatic: 1.2,
       frictionAir: 0.02,
       density: 0.004
-    });
-    const pizzaFoot = Bodies.rectangle(pizza.x, pizza.y + pizza.radius - 4, pizza.radius * 0.9, 6, {
-      isSensor: true,
-      label: 'pizzaFoot'
-    });
-    const pizzaBody = Body.create({
-      label: 'pizza',
-      parts: [pizzaCore, pizzaFoot],
-      friction: 0.12,
-      frictionStatic: 0.9,
-      frictionAir: 0.02
     });
     Composite.add(physicsWorld, pizzaBody);
 
     const groundedContacts = new Set();
+    let groundedCoyoteTimer = 0;
     const trackGrounding = (pairs) => {
       for (const pair of pairs) {
-        if (!pair.isActive) continue;
-        if (pair.bodyA === pizzaFoot || pair.bodyB === pizzaFoot) {
-          const other = pair.bodyA === pizzaFoot ? pair.bodyB : pair.bodyA;
-          if (!other.isSensor) {
-            groundedContacts.add(other.id);
-            pizza.grounded = true;
+        if (!pair || !pair.isActive) continue;
+        const involvesPizza = pair.bodyA === pizzaBody || pair.bodyB === pizzaBody;
+        if (!involvesPizza) continue;
+        const other = pair.bodyA === pizzaBody ? pair.bodyB : pair.bodyA;
+        if (!other || other.isSensor) continue;
+
+        const supports = Array.isArray(pair.collision && pair.collision.supports)
+          ? pair.collision.supports
+          : [];
+        let supportY = -Infinity;
+        for (const point of supports) {
+          if (point && typeof point.y === 'number') {
+            supportY = Math.max(supportY, point.y);
           }
+        }
+        const groundThreshold = pizzaBody.position.y + pizza.radius * 0.35;
+
+        const normal = (pair.collision && pair.collision.normal) || { x: 0, y: 0 };
+        const pizzaIsA = pair.bodyA === pizzaBody;
+        const normalY = pizzaIsA ? -normal.y : normal.y;
+
+        if (supportY >= groundThreshold || normalY < -0.35) {
+          groundedContacts.add(other.id);
+          pizza.grounded = true;
         }
       }
     };
@@ -365,8 +375,10 @@
 
     Events.on(engine, 'collisionEnd', (event) => {
       for (const pair of event.pairs) {
-        if (pair.bodyA === pizzaFoot || pair.bodyB === pizzaFoot) {
-          const other = pair.bodyA === pizzaFoot ? pair.bodyB : pair.bodyA;
+        const involvesPizza = pair.bodyA === pizzaBody || pair.bodyB === pizzaBody;
+        if (!involvesPizza) continue;
+        const other = pair.bodyA === pizzaBody ? pair.bodyB : pair.bodyA;
+        if (other && typeof other.id !== 'undefined') {
           groundedContacts.delete(other.id);
         }
       }
@@ -407,13 +419,21 @@
       });
     }
 
-    function circleRectOverlap(circle, rect) {
+    function circleRectContact(circle, rect) {
       const closestX = Math.max(rect.x, Math.min(circle.x, rect.x + rect.width));
       const closestY = Math.max(rect.y, Math.min(circle.y, rect.y + rect.height));
       const dx = circle.x - closestX;
       const dy = circle.y - closestY;
       const distanceSq = dx * dx + dy * dy;
-      return distanceSq < circle.radius * circle.radius;
+      const distance = Math.sqrt(distanceSq);
+      return {
+        overlap: distanceSq < circle.radius * circle.radius,
+        closestX,
+        closestY,
+        dx,
+        dy,
+        distance
+      };
     }
 
     function updateSkeletons(dt) {
@@ -431,8 +451,11 @@
           skeleton.dir = -1;
         }
 
-        if (circleRectOverlap(pizza, skeleton)) {
-          const hittingFromAbove = pizza.vy > 6 && pizza.y < skeleton.y;
+        const contact = circleRectContact(pizza, skeleton);
+        if (contact.overlap) {
+          // Measure from collision point toward the pizza center; positive means pizza is above.
+          const downwardDot = contact.distance > 0 ? -contact.dy / contact.distance : 1;
+          const hittingFromAbove = downwardDot > 0.6;
           if (hittingFromAbove && pizza.invincibleTimer <= 0) {
             skeleton.alive = false;
             skeleton.hitTimer = 0.6;
@@ -440,7 +463,6 @@
               x: pizzaBody.velocity.x,
               y: -physicsSettings.jumpSpeed * 0.7
             });
-            Body.setAngularVelocity(pizzaBody, pizzaBody.angularVelocity + 4 * Math.sign(pizzaBody.velocity.x || 1));
             pizza.score += 100;
             playSound('enemy');
             for (let i = 0; i < 12; i++) {
@@ -453,14 +475,17 @@
           } else if (pizza.invincibleTimer <= 0) {
             pizza.health -= 1;
             pizza.invincibleTimer = 1.2;
+            const hitX = contact.closestX;
+            const hitY = contact.closestY;
+            const awayX = pizza.x - hitX;
+            const awayY = pizza.y - hitY;
+            const awayLen = Math.hypot(awayX, awayY) || 1;
+            const nx = awayX / awayLen;
+            const ny = awayY / awayLen;
             Body.setVelocity(pizzaBody, {
-              x: pizzaBody.velocity.x + Math.sign(pizza.x - (skeleton.x + skeleton.width / 2)) * 5,
-              y: -physicsSettings.jumpSpeed * 0.5
+              x: pizzaBody.velocity.x + nx * 6,
+              y: pizzaBody.velocity.y + ny * 6 - physicsSettings.jumpSpeed * 0.4
             });
-            Body.setAngularVelocity(
-              pizzaBody,
-              pizzaBody.angularVelocity + Math.sign(pizzaBody.velocity.x || 1) * 6
-            );
             playSound('hurt');
             if (pizza.health <= 0) {
               resetGame();
@@ -503,6 +528,10 @@
 
     function updatePizza(dt) {
       pizza.invincibleTimer = Math.max(0, pizza.invincibleTimer - dt);
+      groundedCoyoteTimer = groundedContacts.size > 0
+        ? 0.16
+        : Math.max(0, groundedCoyoteTimer - dt);
+      pizza.grounded = groundedCoyoteTimer > 0;
 
       const rollDir = (keys.left ? -1 : 0) + (keys.right ? 1 : 0);
       if (rollDir !== 0) {
@@ -520,10 +549,6 @@
 
       if (jumpQueued && pizza.grounded) {
         Body.setVelocity(pizzaBody, { x: pizzaBody.velocity.x, y: -physicsSettings.jumpSpeed });
-        Body.setAngularVelocity(
-          pizzaBody,
-          pizzaBody.angularVelocity + (keys.right ? 1 : keys.left ? -1 : 0) * 3
-        );
         jumpQueued = false;
         playSound('jump');
       } else if (jumpQueued && !pizza.grounded) {
@@ -531,6 +556,14 @@
       }
 
       Engine.update(engine, dt * 1000);
+
+      const clampedSpin = Math.max(
+        -physicsSettings.maxSpin,
+        Math.min(physicsSettings.maxSpin, pizzaBody.angularVelocity)
+      );
+      if (clampedSpin !== pizzaBody.angularVelocity) {
+        Body.setAngularVelocity(pizzaBody, clampedSpin);
+      }
 
       pizza.x = pizzaBody.position.x;
       pizza.y = pizzaBody.position.y;
