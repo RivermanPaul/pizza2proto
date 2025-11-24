@@ -36,12 +36,12 @@
     swimAccel: 180,
     swimBoost: 240 * 4,
     drag: 0.9,
-    sinkForce: 48,
+    sinkForce: 96,
     maxSpeed: 160
   };
 
   // Camera that follows the swimmer while respecting the enlarged lake dimensions.
-  const camera = { x: 0, y: 0 };
+  const camera = { x: 0, y: 0, zoom: 1 };
 
   // Track growth progress when eating fish one size down.
   let growthProgress = 0;
@@ -51,6 +51,15 @@
   let pendingAction = null;
   // Cache the active playSound hook from the platformer shell.
   let playSound = () => {};
+  // Animate visual growth while immediately updating gameplay stats.
+  const growthAnimation = {
+    active: false,
+    progress: 0,
+    duration: 0.65,
+    startRadius: 0,
+    targetRadius: 0,
+    pendingZoom: false
+  };
 
   // Produce a mouth position for a circular character using its facing direction.
   function getMouthPoint(entity) {
@@ -126,13 +135,74 @@
     camera.y = clamp(targetY, 0, maxY);
   }
 
+  // Start a growth animation while keeping gameplay stats at the new size.
+  function startGrowthAnimation(previousRadius) {
+    // Flag the animation so rendering can ease toward the new radius.
+    growthAnimation.active = true;
+    growthAnimation.progress = 0;
+    growthAnimation.startRadius = previousRadius;
+    growthAnimation.targetRadius = swimmer.radius;
+    // Request a camera zoom adjustment after the animation completes.
+    growthAnimation.pendingZoom = true;
+  }
+
+  // Calculate how large the swimmer should appear while animating growth.
+  function computeSwimmerRenderRadius() {
+    // Use the raw radius when no growth animation is active.
+    if (!growthAnimation.active) {
+      return swimmer.radius;
+    }
+    // Ease the radius toward the final size for a smoother look.
+    const t = Math.min(1, growthAnimation.progress / growthAnimation.duration);
+    const eased = t * t * (3 - 2 * t);
+    return growthAnimation.startRadius + (growthAnimation.targetRadius - growthAnimation.startRadius) * eased;
+  }
+
+  // Advance and resolve growth animations and camera zoom steps.
+  function updateGrowthAnimation(dt) {
+    // Skip processing when no animation is in play.
+    if (!growthAnimation.active) {
+      return;
+    }
+    // Progress the timer toward completion.
+    growthAnimation.progress = Math.min(growthAnimation.duration, growthAnimation.progress + dt);
+    // Apply camera zoom and finalize the animation when the timer ends.
+    if (growthAnimation.progress >= growthAnimation.duration) {
+      growthAnimation.active = false;
+      if (growthAnimation.pendingZoom) {
+        // Zoom out slightly so the larger swimmer stays in frame.
+        camera.zoom = Math.max(0.65, camera.zoom * 0.96);
+        growthAnimation.pendingZoom = false;
+      }
+    }
+  }
+
+  // Translate size gaps into the number of growth points awarded.
+  function getGrowthPoints(sizeDifference) {
+    // Award full credit for fish just one size down.
+    if (sizeDifference === 1) {
+      return 1;
+    }
+    // Award half credit for fish that are two sizes smaller.
+    if (sizeDifference === 2) {
+      return 0.5;
+    }
+    // Award a quarter credit for fish three sizes smaller.
+    if (sizeDifference === 3) {
+      return 0.25;
+    }
+    return 0;
+  }
+
   // Grow the swimmer after eating enough appropriately sized fish.
   function applyGrowthIfReady() {
-    // Increase size after eating three fish exactly one tier smaller.
-    if (growthProgress >= 3) {
+    // Promote the swimmer while enough points are banked.
+    while (growthProgress >= 3 && swimmer.size < 6) {
+      const previousRadius = swimmer.radius;
       swimmer.size = Math.min(6, swimmer.size + 1);
       swimmer.radius = sizeToRadius(swimmer.size);
-      growthProgress = 0;
+      growthProgress -= 3;
+      startGrowthAnimation(previousRadius);
       // Play a celebratory ping when the player grows.
       playSound('coin');
       // Return to the overworld once the player reaches the final size.
@@ -219,11 +289,13 @@
       const playerBiteDistance = Math.hypot(target.x - mouth.x, target.y - mouth.y);
       // Allow the swimmer to eat fish that are strictly smaller.
       if (playerBiteDistance <= target.radius + mouthRadius && target.size < swimmer.size) {
-        const countedForGrowth = target.size === swimmer.size - 1;
+        const sizeDifference = swimmer.size - target.size;
+        const growthGain = getGrowthPoints(sizeDifference);
         fish.splice(i, 1);
         fish.push(createFish(target.size));
-        if (countedForGrowth) {
-          growthProgress += 1;
+        // Only add progress when the eaten fish is large enough to matter.
+        if (growthGain > 0) {
+          growthProgress += growthGain;
           applyGrowthIfReady();
         }
         playSound('enemy');
@@ -260,11 +332,12 @@
 
   // Draw the underwater backdrop, fish, and HUD.
   function draw(ctx) {
-    const viewWidth = ctx.canvas.width;
-    const viewHeight = ctx.canvas.height;
+    const viewWidth = ctx.canvas.width / camera.zoom;
+    const viewHeight = ctx.canvas.height / camera.zoom;
     updateCameraView(viewWidth, viewHeight);
 
     ctx.save();
+    ctx.scale(camera.zoom, camera.zoom);
     ctx.translate(-camera.x, -camera.y);
     const gradient = ctx.createLinearGradient(0, 0, 0, lake.height);
     gradient.addColorStop(0, '#0a1c2f');
@@ -292,13 +365,14 @@
     ctx.save();
     ctx.translate(swimmer.x, swimmer.y);
     ctx.rotate(swimmer.facing === -1 ? Math.PI : 0);
+    const swimmerRenderRadius = computeSwimmerRenderRadius();
     ctx.fillStyle = '#f2b705';
     ctx.beginPath();
-    ctx.arc(0, 0, swimmer.radius, 0, Math.PI * 2);
+    ctx.arc(0, 0, swimmerRenderRadius, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = '#c1440e';
     ctx.beginPath();
-    ctx.arc(swimmer.radius * 0.6, 0, swimmer.radius * 0.2, 0, Math.PI * 2);
+    ctx.arc(swimmerRenderRadius * 0.6, 0, swimmerRenderRadius * 0.2, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
     ctx.restore();
@@ -310,7 +384,9 @@
     ctx.font = '14px monospace';
     ctx.fillText(`Lake size: ${swimmer.size}/6`, 16, 30);
     ctx.fillText(`Health: ${swimmer.health}`, 16, 50);
-    ctx.fillText(`Growth: ${growthProgress}/3`, 16, 70);
+    // Show fractional progress with two decimals when needed.
+    const growthDisplay = Number.isInteger(growthProgress) ? growthProgress : growthProgress.toFixed(2);
+    ctx.fillText(`Growth: ${growthDisplay}/3`, 16, 70);
   }
 
   // Update the entire lake mode and surface transition requests.
@@ -319,6 +395,7 @@
     playSound = typeof playSoundHook === 'function' ? playSoundHook : () => {};
     damageCooldown = Math.max(0, damageCooldown - dt);
     updateSwimmer(dt, keys || {});
+    updateGrowthAnimation(dt);
     // Advance each fish to keep the lake lively.
     for (const actor of fish) {
       updateFish(dt, actor);
