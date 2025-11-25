@@ -161,6 +161,7 @@
   <script src="enemies.js"></script>
   <script src="lake.js"></script>
   <script src="gladiator.js"></script>
+  <script src="bounce.js"></script>
   <script src="overworld.js"></script>
   <script>
     // Canvas and audio bootstrap.
@@ -209,8 +210,8 @@
     let jumpQueued = false;
 
     // Game mode toggles that gate whether the player is in platforming, overworld exploration, or the lake variant.
-    const gameModes = { PLATFORMER: 'platformer', OVERWORLD: 'overworld', LAKE: 'lake', GLADIATOR: 'gladiator' };
-    let currentMode = gameModes.GLADIATOR;
+    const gameModes = { PLATFORMER: 'platformer', OVERWORLD: 'overworld', LAKE: 'lake', GLADIATOR: 'gladiator', BOUNCE: 'bounce' };
+    let currentMode = gameModes.OVERWORLD;
     let currentLevelId = 'stage1';
 
     // Overworld controller reference with safe fallbacks in case the module fails to load.
@@ -244,6 +245,21 @@
       // Blank draw placeholder so rendering keeps running without the module.
       draw: () => {}
     };
+
+    // Bounce controller reference for trampoline-style coin collection.
+    const bounce = window.BounceMode || {
+      // Reset bounce state if the module fails to load so the game loop continues.
+      enter: () => {},
+      // No-op update to keep the main loop alive when bounce mode is absent.
+      update: () => null,
+      // Blank draw placeholder so rendering keeps running without the module.
+      draw: () => {}
+    };
+
+    // Start on the overworld map so players choose a stage before entering action modes.
+    if (currentMode === gameModes.OVERWORLD) {
+      overworld.enter(0);
+    }
 
     // Immediately start the arena mode so stage one matches the overworld labeling.
     if (currentMode === gameModes.GLADIATOR) {
@@ -549,6 +565,10 @@
       if (currentLevelId === 'stage2') {
         currentMode = gameModes.LAKE;
         lake.enter(playSound);
+      } else if (currentLevelId === 'stage3') {
+        // Launch the bounce mode for the overworld's third stage.
+        currentMode = gameModes.BOUNCE;
+        bounce.enter(playSound);
       } else if (currentLevelId === 'stage1') {
         // Drop into the arena survival mode for the first stage.
         currentMode = gameModes.GLADIATOR;
@@ -769,6 +789,14 @@
           gladiator.draw(ctx);
           // Return to the overworld after clearing all waves.
           if (gladiatorAction && gladiatorAction.type === 'return-to-map') {
+            enterOverworld();
+          }
+        } else if (currentMode === gameModes.BOUNCE) {
+          // Drive the trampoline-based bounce mode for overworld stage three.
+          const bounceAction = bounce.update(dt, keys, playSound);
+          bounce.draw(ctx);
+          // Return to the overworld once the coin goal is reached.
+          if (bounceAction && bounceAction.type === 'return-to-map') {
             enterOverworld();
           }
         } else if (currentMode === gameModes.OVERWORLD) {
