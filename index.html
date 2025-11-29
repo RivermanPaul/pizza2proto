@@ -163,6 +163,7 @@
   <script src="gladiator.js"></script>
   <script src="bounce.js"></script>
   <script src="overworld.js"></script>
+  <script src="pauseMenu.js"></script>
   <script>
     // Canvas and audio bootstrap.
     const canvas = document.getElementById('game');
@@ -355,9 +356,16 @@
     });
 
     const muteToggle = document.getElementById('mute-toggle');
-    // Update the mute button label so it reflects the current audio state.
+    let pauseMenuController;
+
+    // Update both mute buttons so their labels reflect the current audio state.
     function refreshMuteLabel() {
-      muteToggle.textContent = audio.isMuted() ? 'Unmute' : 'Mute';
+      const muted = audio.isMuted();
+      muteToggle.textContent = muted ? 'Unmute' : 'Mute';
+      // Sync the pause menu button label once the controller exists.
+      if (pauseMenuController) {
+        pauseMenuController.updateMuteLabel(muted);
+      }
     }
     // Toggle audio muting in response to user taps.
     muteToggle.addEventListener('click', () => {
@@ -371,6 +379,31 @@
       refreshMuteLabel();
     });
     refreshMuteLabel();
+
+    // Initialize the pause menu controller so button callbacks update shared state.
+    pauseMenuController = window.PauseMenu.init({
+      // Handle toggles from the pause menu by delegating to the audio manager.
+      onToggleMute: () => {
+        const nextMute = !audio.isMuted();
+        audio.setMuted(nextMute);
+        // Unlock playback if the player unmutes from the pause menu.
+        if (!nextMute) {
+          audio.unlockAudio();
+        }
+        refreshMuteLabel();
+      },
+      // Reset the frame timer when resuming from a paused state.
+      onResume: () => {
+        lastTime = 0;
+      },
+      // Swap back to the overworld and reset timing when exiting via pause.
+      onExit: () => {
+        enterOverworld();
+        lastTime = 0;
+      },
+      // Surface the current mute status so the pause menu label starts correct.
+      isMuted: () => audio.isMuted()
+    });
 
     const pizza = {
       x: 140,
@@ -752,6 +785,31 @@
       ctx.restore();
     }
 
+    // Draws the current scene without advancing simulation so paused frames remain static.
+    function renderActiveScene() {
+      // Render the platforming stage when the player is in the core action mode.
+      if (currentMode === gameModes.PLATFORMER) {
+        drawBackground();
+        drawPlatforms();
+        enemies.drawSkeletons(ctx, camera.x);
+        drawPizza();
+        drawParticles();
+        drawHUD();
+      } else if (currentMode === gameModes.GLADIATOR) {
+        // Render the gladiator arena when survival mode is active.
+        gladiator.draw(ctx);
+      } else if (currentMode === gameModes.BOUNCE) {
+        // Render the bounce stage when the trampoline mode is active.
+        bounce.draw(ctx);
+      } else if (currentMode === gameModes.OVERWORLD) {
+        // Render the overworld map when the player is exploring nodes.
+        overworld.draw(ctx);
+      } else if (currentMode === gameModes.LAKE) {
+        // Render the underwater stage while in lake mode.
+        lake.draw(ctx);
+      }
+    }
+
     let lastTime = 0;
     function loop(timestamp) {
       // Initialize the previous time on the very first frame.
@@ -760,6 +818,13 @@
       lastTime = timestamp;
 
       try {
+        // Halt updates when paused but continue drawing the frozen scene.
+        if (pauseMenuController.isPaused()) {
+          renderActiveScene();
+          requestAnimationFrame(loop);
+          return;
+        }
+
         // Run platformer updates when the player is inside the action stage.
         if (currentMode === gameModes.PLATFORMER) {
           updatePizza(dt);
@@ -774,19 +839,14 @@
 
           // Only draw the platformer scene if the player has not swapped to the overworld mid-frame.
           if (currentMode === gameModes.PLATFORMER) {
-            drawBackground();
-            drawPlatforms();
-            enemies.drawSkeletons(ctx, camera.x);
-            drawPizza();
-            drawParticles();
-            drawHUD();
+            renderActiveScene();
           } else {
             overworld.draw(ctx);
           }
         } else if (currentMode === gameModes.GLADIATOR) {
           // Run arena survival when the player enters the Gladiator mode.
           const gladiatorAction = gladiator.update(dt, keys, playSound);
-          gladiator.draw(ctx);
+          renderActiveScene();
           // Return to the overworld after clearing all waves.
           if (gladiatorAction && gladiatorAction.type === 'return-to-map') {
             enterOverworld();
@@ -794,7 +854,7 @@
         } else if (currentMode === gameModes.BOUNCE) {
           // Drive the trampoline-based bounce mode for overworld stage three.
           const bounceAction = bounce.update(dt, keys, playSound);
-          bounce.draw(ctx);
+          renderActiveScene();
           // Return to the overworld once the coin goal is reached.
           if (bounceAction && bounceAction.type === 'return-to-map') {
             enterOverworld();
@@ -802,7 +862,7 @@
         } else if (currentMode === gameModes.OVERWORLD) {
           // Drive overworld navigation when the player is outside the action stage.
           const overworldAction = overworld.update(dt, keys, playSound);
-          overworld.draw(ctx);
+          renderActiveScene();
           // Return to the action stage when the player confirms a level node.
           if (overworldAction && overworldAction.type === 'launch-level') {
             exitOverworld(overworldAction.from);
@@ -810,7 +870,7 @@
         } else if (currentMode === gameModes.LAKE) {
           // Drive the underwater stage for level two.
           const lakeAction = lake.update(dt, keys, playSound);
-          lake.draw(ctx);
+          renderActiveScene();
           // Return to the overworld after winning the lake mode.
           if (lakeAction && lakeAction.type === 'return-to-map') {
             enterOverworld();
