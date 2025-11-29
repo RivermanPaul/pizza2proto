@@ -113,6 +113,59 @@
       transform: translateY(2px);
       background: #2f2951;
     }
+    #pause-button {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      padding: 10px 14px;
+      border-radius: 12px;
+      border: 2px solid #42405f;
+      background: #1e1b34;
+      color: #f4f4fb;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      cursor: pointer;
+      z-index: 20;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    }
+    #pause-menu {
+      position: fixed;
+      top: 60px;
+      right: 12px;
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+      padding: 14px;
+      border-radius: 12px;
+      background: rgba(12, 11, 24, 0.94);
+      border: 1px solid #35334f;
+      z-index: 25;
+      min-width: 180px;
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+    }
+    #pause-menu.visible {
+      display: flex;
+    }
+    #pause-menu h3 {
+      margin: 0 0 6px 0;
+      font-size: 16px;
+      color: #f4f4fb;
+      letter-spacing: 0.5px;
+    }
+    #pause-menu button {
+      height: 40px;
+      border-radius: 10px;
+      border: 2px solid #42405f;
+      background: #24213b;
+      color: #f4f4fb;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.1s ease, transform 0.1s ease;
+    }
+    #pause-menu button:active {
+      background: #2f2951;
+      transform: translateY(1px);
+    }
     @media (max-width: 640px) {
       #game-layout {
         padding-bottom: 16px;
@@ -128,6 +181,13 @@
   </style>
 </head>
 <body>
+  <button id="pause-button" aria-label="Pause Game">Pause</button>
+  <div id="pause-menu" aria-label="Pause Menu">
+    <h3>Paused</h3>
+    <button id="pause-resume" aria-label="Return to Game">Return to Game</button>
+    <button id="pause-mute" aria-label="Toggle Mute">Mute</button>
+    <button id="pause-exit" aria-label="Exit to Overworld">Exit to Overworld</button>
+  </div>
   <div id="game-layout">
     <div id="game-stage">
       <canvas id="game" width="512" height="288"></canvas>
@@ -355,9 +415,17 @@
     });
 
     const muteToggle = document.getElementById('mute-toggle');
-    // Update the mute button label so it reflects the current audio state.
+    const pauseMenu = document.getElementById('pause-menu');
+    const pauseButton = document.getElementById('pause-button');
+    const pauseResumeButton = document.getElementById('pause-resume');
+    const pauseMuteButton = document.getElementById('pause-mute');
+    const pauseExitButton = document.getElementById('pause-exit');
+    let isPaused = false;
+
+    // Update both mute buttons so their labels reflect the current audio state.
     function refreshMuteLabel() {
       muteToggle.textContent = audio.isMuted() ? 'Unmute' : 'Mute';
+      pauseMuteButton.textContent = audio.isMuted() ? 'Unmute' : 'Mute';
     }
     // Toggle audio muting in response to user taps.
     muteToggle.addEventListener('click', () => {
@@ -371,6 +439,53 @@
       refreshMuteLabel();
     });
     refreshMuteLabel();
+
+    // Opens the pause menu and freezes gameplay progression.
+    function openPauseMenu() {
+      isPaused = true;
+      pauseMenu.classList.add('visible');
+      pauseButton.textContent = 'Resume';
+    }
+
+    // Closes the pause menu and resumes gameplay timing.
+    function closePauseMenu() {
+      isPaused = false;
+      pauseMenu.classList.remove('visible');
+      pauseButton.textContent = 'Pause';
+      lastTime = 0;
+    }
+
+    pauseButton.addEventListener('click', () => {
+      // Resume when the player taps the pause button while already paused.
+      if (isPaused) {
+        closePauseMenu();
+      } else {
+        // Pause when the player taps the button during active play.
+        openPauseMenu();
+      }
+    });
+
+    pauseResumeButton.addEventListener('click', () => {
+      // Returning to the game simply hides the pause menu.
+      closePauseMenu();
+    });
+
+    pauseMuteButton.addEventListener('click', () => {
+      const nextMute = !audio.isMuted();
+      // Apply the requested mute state before syncing labels.
+      audio.setMuted(nextMute);
+      // Unlock playback if the player unmutes from the pause menu.
+      if (!nextMute) {
+        audio.unlockAudio();
+      }
+      refreshMuteLabel();
+    });
+
+    pauseExitButton.addEventListener('click', () => {
+      // Jump back to the overworld from any paused mode.
+      enterOverworld();
+      closePauseMenu();
+    });
 
     const pizza = {
       x: 140,
@@ -752,6 +867,31 @@
       ctx.restore();
     }
 
+    // Draws the current scene without advancing simulation so paused frames remain static.
+    function renderActiveScene() {
+      // Render the platforming stage when the player is in the core action mode.
+      if (currentMode === gameModes.PLATFORMER) {
+        drawBackground();
+        drawPlatforms();
+        enemies.drawSkeletons(ctx, camera.x);
+        drawPizza();
+        drawParticles();
+        drawHUD();
+      } else if (currentMode === gameModes.GLADIATOR) {
+        // Render the gladiator arena when survival mode is active.
+        gladiator.draw(ctx);
+      } else if (currentMode === gameModes.BOUNCE) {
+        // Render the bounce stage when the trampoline mode is active.
+        bounce.draw(ctx);
+      } else if (currentMode === gameModes.OVERWORLD) {
+        // Render the overworld map when the player is exploring nodes.
+        overworld.draw(ctx);
+      } else if (currentMode === gameModes.LAKE) {
+        // Render the underwater stage while in lake mode.
+        lake.draw(ctx);
+      }
+    }
+
     let lastTime = 0;
     function loop(timestamp) {
       // Initialize the previous time on the very first frame.
@@ -760,6 +900,13 @@
       lastTime = timestamp;
 
       try {
+        // Halt updates when paused but continue drawing the frozen scene.
+        if (isPaused) {
+          renderActiveScene();
+          requestAnimationFrame(loop);
+          return;
+        }
+
         // Run platformer updates when the player is inside the action stage.
         if (currentMode === gameModes.PLATFORMER) {
           updatePizza(dt);
@@ -774,19 +921,14 @@
 
           // Only draw the platformer scene if the player has not swapped to the overworld mid-frame.
           if (currentMode === gameModes.PLATFORMER) {
-            drawBackground();
-            drawPlatforms();
-            enemies.drawSkeletons(ctx, camera.x);
-            drawPizza();
-            drawParticles();
-            drawHUD();
+            renderActiveScene();
           } else {
             overworld.draw(ctx);
           }
         } else if (currentMode === gameModes.GLADIATOR) {
           // Run arena survival when the player enters the Gladiator mode.
           const gladiatorAction = gladiator.update(dt, keys, playSound);
-          gladiator.draw(ctx);
+          renderActiveScene();
           // Return to the overworld after clearing all waves.
           if (gladiatorAction && gladiatorAction.type === 'return-to-map') {
             enterOverworld();
@@ -794,7 +936,7 @@
         } else if (currentMode === gameModes.BOUNCE) {
           // Drive the trampoline-based bounce mode for overworld stage three.
           const bounceAction = bounce.update(dt, keys, playSound);
-          bounce.draw(ctx);
+          renderActiveScene();
           // Return to the overworld once the coin goal is reached.
           if (bounceAction && bounceAction.type === 'return-to-map') {
             enterOverworld();
@@ -802,7 +944,7 @@
         } else if (currentMode === gameModes.OVERWORLD) {
           // Drive overworld navigation when the player is outside the action stage.
           const overworldAction = overworld.update(dt, keys, playSound);
-          overworld.draw(ctx);
+          renderActiveScene();
           // Return to the action stage when the player confirms a level node.
           if (overworldAction && overworldAction.type === 'launch-level') {
             exitOverworld(overworldAction.from);
@@ -810,7 +952,7 @@
         } else if (currentMode === gameModes.LAKE) {
           // Drive the underwater stage for level two.
           const lakeAction = lake.update(dt, keys, playSound);
-          lake.draw(ctx);
+          renderActiveScene();
           // Return to the overworld after winning the lake mode.
           if (lakeAction && lakeAction.type === 'return-to-map') {
             enterOverworld();
