@@ -113,59 +113,6 @@
       transform: translateY(2px);
       background: #2f2951;
     }
-    #pause-button {
-      position: fixed;
-      top: 12px;
-      right: 12px;
-      padding: 10px 14px;
-      border-radius: 12px;
-      border: 2px solid #42405f;
-      background: #1e1b34;
-      color: #f4f4fb;
-      font-weight: 700;
-      letter-spacing: 0.4px;
-      cursor: pointer;
-      z-index: 20;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-    }
-    #pause-menu {
-      position: fixed;
-      top: 60px;
-      right: 12px;
-      display: none;
-      flex-direction: column;
-      gap: 10px;
-      padding: 14px;
-      border-radius: 12px;
-      background: rgba(12, 11, 24, 0.94);
-      border: 1px solid #35334f;
-      z-index: 25;
-      min-width: 180px;
-      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
-    }
-    #pause-menu.visible {
-      display: flex;
-    }
-    #pause-menu h3 {
-      margin: 0 0 6px 0;
-      font-size: 16px;
-      color: #f4f4fb;
-      letter-spacing: 0.5px;
-    }
-    #pause-menu button {
-      height: 40px;
-      border-radius: 10px;
-      border: 2px solid #42405f;
-      background: #24213b;
-      color: #f4f4fb;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background 0.1s ease, transform 0.1s ease;
-    }
-    #pause-menu button:active {
-      background: #2f2951;
-      transform: translateY(1px);
-    }
     @media (max-width: 640px) {
       #game-layout {
         padding-bottom: 16px;
@@ -181,13 +128,6 @@
   </style>
 </head>
 <body>
-  <button id="pause-button" aria-label="Pause Game">Pause</button>
-  <div id="pause-menu" aria-label="Pause Menu">
-    <h3>Paused</h3>
-    <button id="pause-resume" aria-label="Return to Game">Return to Game</button>
-    <button id="pause-mute" aria-label="Toggle Mute">Mute</button>
-    <button id="pause-exit" aria-label="Exit to Overworld">Exit to Overworld</button>
-  </div>
   <div id="game-layout">
     <div id="game-stage">
       <canvas id="game" width="512" height="288"></canvas>
@@ -223,6 +163,7 @@
   <script src="gladiator.js"></script>
   <script src="bounce.js"></script>
   <script src="overworld.js"></script>
+  <script src="pauseMenu.js"></script>
   <script>
     // Canvas and audio bootstrap.
     const canvas = document.getElementById('game');
@@ -415,17 +356,16 @@
     });
 
     const muteToggle = document.getElementById('mute-toggle');
-    const pauseMenu = document.getElementById('pause-menu');
-    const pauseButton = document.getElementById('pause-button');
-    const pauseResumeButton = document.getElementById('pause-resume');
-    const pauseMuteButton = document.getElementById('pause-mute');
-    const pauseExitButton = document.getElementById('pause-exit');
-    let isPaused = false;
+    let pauseMenuController;
 
     // Update both mute buttons so their labels reflect the current audio state.
     function refreshMuteLabel() {
-      muteToggle.textContent = audio.isMuted() ? 'Unmute' : 'Mute';
-      pauseMuteButton.textContent = audio.isMuted() ? 'Unmute' : 'Mute';
+      const muted = audio.isMuted();
+      muteToggle.textContent = muted ? 'Unmute' : 'Mute';
+      // Sync the pause menu button label once the controller exists.
+      if (pauseMenuController) {
+        pauseMenuController.updateMuteLabel(muted);
+      }
     }
     // Toggle audio muting in response to user taps.
     muteToggle.addEventListener('click', () => {
@@ -440,51 +380,29 @@
     });
     refreshMuteLabel();
 
-    // Opens the pause menu and freezes gameplay progression.
-    function openPauseMenu() {
-      isPaused = true;
-      pauseMenu.classList.add('visible');
-      pauseButton.textContent = 'Resume';
-    }
-
-    // Closes the pause menu and resumes gameplay timing.
-    function closePauseMenu() {
-      isPaused = false;
-      pauseMenu.classList.remove('visible');
-      pauseButton.textContent = 'Pause';
-      lastTime = 0;
-    }
-
-    pauseButton.addEventListener('click', () => {
-      // Resume when the player taps the pause button while already paused.
-      if (isPaused) {
-        closePauseMenu();
-      } else {
-        // Pause when the player taps the button during active play.
-        openPauseMenu();
-      }
-    });
-
-    pauseResumeButton.addEventListener('click', () => {
-      // Returning to the game simply hides the pause menu.
-      closePauseMenu();
-    });
-
-    pauseMuteButton.addEventListener('click', () => {
-      const nextMute = !audio.isMuted();
-      // Apply the requested mute state before syncing labels.
-      audio.setMuted(nextMute);
-      // Unlock playback if the player unmutes from the pause menu.
-      if (!nextMute) {
-        audio.unlockAudio();
-      }
-      refreshMuteLabel();
-    });
-
-    pauseExitButton.addEventListener('click', () => {
-      // Jump back to the overworld from any paused mode.
-      enterOverworld();
-      closePauseMenu();
+    // Initialize the pause menu controller so button callbacks update shared state.
+    pauseMenuController = window.PauseMenu.init({
+      // Handle toggles from the pause menu by delegating to the audio manager.
+      onToggleMute: () => {
+        const nextMute = !audio.isMuted();
+        audio.setMuted(nextMute);
+        // Unlock playback if the player unmutes from the pause menu.
+        if (!nextMute) {
+          audio.unlockAudio();
+        }
+        refreshMuteLabel();
+      },
+      // Reset the frame timer when resuming from a paused state.
+      onResume: () => {
+        lastTime = 0;
+      },
+      // Swap back to the overworld and reset timing when exiting via pause.
+      onExit: () => {
+        enterOverworld();
+        lastTime = 0;
+      },
+      // Surface the current mute status so the pause menu label starts correct.
+      isMuted: () => audio.isMuted()
     });
 
     const pizza = {
@@ -901,7 +819,7 @@
 
       try {
         // Halt updates when paused but continue drawing the frozen scene.
-        if (isPaused) {
+        if (pauseMenuController.isPaused()) {
           renderActiveScene();
           requestAnimationFrame(loop);
           return;
